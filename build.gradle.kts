@@ -5,16 +5,13 @@ plugins {
 version = "1.0.0-SNAPSHOT"
 group = "com.github.skykatik"
 
-repositories {
-    mavenCentral()
-}
+subprojects {
 
-dependencies {
+    apply(plugin = "java-library")
 
-}
-
-tasks.withType<JavaCompile> {
-    options.javaModuleVersion.set(version.toString())
-    options.encoding = "UTF-8"
-    options.release.set(17)
+    tasks.withType<JavaCompile> {
+        options.javaModuleVersion.set(version.toString())
+        options.encoding = "UTF-8"
+        options.release.set(17)
+    }
 }
