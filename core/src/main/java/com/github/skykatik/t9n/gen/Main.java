@@ -1,6 +1,4 @@
-package com.github.skykatik.t9n;
-
-import com.github.skykatik.t9n.gen.PropertyKeyNaming;
+package com.github.skykatik.t9n.gen;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -237,6 +235,7 @@ public class Main {
         sink.append("this.locale = locale;");
         sink.end();
 
+        sink.ln();
         sink.append("public Locale locale()");
         sink.begin();
         sink.append("return locale;");

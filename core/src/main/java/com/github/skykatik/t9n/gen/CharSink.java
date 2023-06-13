@@ -1,4 +1,4 @@
-package com.github.skykatik.t9n;
+package com.github.skykatik.t9n.gen;
 
 import java.io.Closeable;
 import java.io.IOException;

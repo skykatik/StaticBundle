@@ -74,6 +74,7 @@ public final class CustomMessageSource extends MessageSource {
         LocaleTag(Locale locale) {
             this.locale = locale;
         }
+
         public Locale locale() {
             return locale;
         }
