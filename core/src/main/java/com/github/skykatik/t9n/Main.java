@@ -30,18 +30,29 @@ public class Main {
             sink.append("package ").append(packageName).append(';');
             sink.ln(2);
 
+            sink.append("import java.util.Locale;").ln();
+            sink.append("import java.util.Objects;");
+            sink.ln(2);
+
             sink.append("public final class ").append(className).append(" extends MessageSource");
             sink.begin();
 
-            generateLocaleTagConstants(locales, sink);
+            sink.append("private final LocaleTag localeTag;");
+            sink.ln();
 
             sink.ln();
-            sink.append("public ").append(className).append("(int localeTag)");
+            sink.append("public ").append(className).append("(LocaleTag localeTag)");
             sink.begin();
-            sink.append("super(localeTag);");
+            sink.append("this.localeTag = Objects.requireNonNull(localeTag);");
             sink.end();
 
-            generateWithLocaleTagMethod(locales, sink);
+            sink.ln();
+            sink.append("public LocaleTag localeTag()");
+            sink.begin();
+            sink.append("return localeTag;");
+            sink.end();
+
+            generateWithLocaleTagMethod(sink);
             generatePluralFormMethod(locales, sink);
 
             var properties = new TreeMap<String, Property>();
@@ -93,6 +104,8 @@ public class Main {
                 }
             }
 
+            generateLocaleTagConstants(locales, sink);
+
             sink.end();
         }
     }
@@ -141,7 +154,6 @@ public class Main {
             sink.endsc();
         }
 
-        sink.append("default -> throw new IllegalStateException();");
         sink.endsc();
 
         sink.end();
@@ -189,22 +201,55 @@ public class Main {
             sink.ln();
         }
 
-        sink.append("default -> throw new IllegalStateException();");
+
         sink.endsc();
 
         sink.end();
     }
 
     private static void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
+        sink.ln();
+        sink.append("public enum LocaleTag");
+        sink.begin();
+
         for (int i = 0; i < locales.size(); i++) {
             var settings = locales.get(i);
-            sink.append("public static final int ");
+
             sink.append(settings.localeTag);
-            sink.append(" = ");
-            sink.append(Integer.toString(i));
-            sink.append(';');
-            sink.ln();
+            sink.append('(');
+            sink.append(localeToString(settings.locale));
+            sink.append(')');
+
+            if (i != locales.size() - 1) {
+                sink.append(',');
+                sink.ln();
+            }
         }
+
+        sink.append(';');
+        sink.ln(2);
+
+        sink.append("private final Locale locale;");
+        sink.ln(2);
+
+        sink.append("LocaleTag(Locale locale)");
+        sink.begin();
+        sink.append("this.locale = locale;");
+        sink.end();
+
+        sink.append("public Locale locale()");
+        sink.begin();
+        sink.append("return locale;");
+        sink.end();
+
+        sink.end();
+    }
+
+    private static String localeToString(Locale locale) {
+        if (locale.equals(Locale.ROOT)) {
+            return "Locale.ROOT";
+        }
+        return "new Locale(" + makeLiteral(locale.toString()) + ')';
     }
 
     private static void generatePluralFormMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
@@ -218,20 +263,16 @@ public class Main {
             sink.append("case ").append(settings.localeTag).append(" -> ").append(settings.pluralFormFunction).append(';');
             sink.ln();
         }
-        sink.append("default -> throw new IllegalStateException();");
-        sink.ln();
+
         sink.endsc();
         sink.end();
     }
 
-    private static void generateWithLocaleTagMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
+    private static void generateWithLocaleTagMethod(CharSink sink) throws IOException {
         sink.ln();
 
-        sink.append("public ").append(className).append(" withLocaleTag(int localeTag)");
+        sink.append("public ").append(className).append(" withLocaleTag(LocaleTag localeTag)");
         sink.begin();
-        sink.append("if (localeTag < 0 || localeTag > ");
-        sink.append(Integer.toString(locales.size())).append(") throw new IllegalArgumentException();");
-        sink.ln();
         sink.append("if (this.localeTag == localeTag) return this;");
         sink.ln();
         sink.append("return new ").append(className).append("(localeTag);");
@@ -418,11 +459,10 @@ public class Main {
     }
 
     static String translateLocaleToLocaleTag(Locale locale) {
-        final String postfix = "_LOCALE_TAG";
         if (locale.equals(Locale.ROOT)) {
-            return "ROOT" + postfix;
+            return "ROOT";
         }
-        return locale.toString().toUpperCase(Locale.ROOT) + postfix;
+        return locale.toString().toUpperCase(Locale.ROOT);
     }
 
     record LocaleSettings(Locale locale, String localeTag, int localeTagValue,
