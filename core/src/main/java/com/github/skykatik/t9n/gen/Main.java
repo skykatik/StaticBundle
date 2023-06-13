@@ -29,8 +29,9 @@ public class Main {
             sink.ln(2);
 
             sink.append("import java.util.Locale;").ln();
-            sink.append("import java.util.Objects;");
-            sink.ln(2);
+            sink.append("import java.util.Objects;").ln();
+            // TODO library imports
+            sink.ln();
 
             sink.append("public final class ").append(className).append(" extends MessageSource");
             sink.begin();
@@ -207,7 +208,7 @@ public class Main {
 
     private static void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
         sink.ln();
-        sink.append("public enum LocaleTag");
+        sink.append("public enum LocaleTag implements com.github.skykatik.t9n.LocaleTag");
         sink.begin();
 
         for (int i = 0; i < locales.size(); i++) {

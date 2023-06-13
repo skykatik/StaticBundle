@@ -36,7 +36,7 @@ public final class CustomMessageSource extends MessageSource {
     public String commandsTestMessage(String playerName, String reason) {
         return switch (localeTag) {
             case ROOT -> "Игрок " + playerName + " и причина " + reason;
-            case EN -> "Reason: " + reason + ", Player name: " + playerName;
+            case EN -> "Reason: " + reason + "\n, Player name: " + playerName;
         };
     }
 
@@ -65,7 +65,7 @@ public final class CustomMessageSource extends MessageSource {
         };
     }
 
-    public enum LocaleTag {
+    public enum LocaleTag implements com.github.skykatik.t9n.LocaleTag {
         ROOT(Locale.ROOT),
         EN(new Locale("en"));
 
