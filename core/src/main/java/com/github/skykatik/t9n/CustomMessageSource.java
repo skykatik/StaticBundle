@@ -24,7 +24,7 @@ public final class CustomMessageSource extends MessageSource {
 
     public String commandsAnotherMessage(int time) {
         return switch (localeTag) {
-            case ROOT_LOCALE_TAG -> "Время " + time + " и столько минут {plural.minutes[time]}";
+            case ROOT_LOCALE_TAG -> "Время " + time + " и 'столько' минут {plural.minutes[time]}";
             case EN_LOCALE_TAG -> "Time: " + time + ", plural minutes: {plural.minutes[time]}";
             default -> throw new IllegalStateException();
         };

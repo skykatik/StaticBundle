@@ -1,28 +1,19 @@
 package com.github.skykatik.t9n;
 
-import java.io.BufferedWriter;
+import com.github.skykatik.t9n.gen.PropertyKeyNaming;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Main {
     static final String indent = " ".repeat(4);
+    static final int lineWrap = 120;
+
     static final String className = "CustomMessageSource";
     static final String packageName = "com.github.skykatik.t9n";
-    static final String pluralKeyFormat = "{base}[{form}]";
-
-    static final Pattern PLURAL_KEY = Pattern.compile(
-            "^" +
-                    pluralKeyFormat
-                            .replace("[", "\\[")
-                            .replace("]", "\\]")
-                            .replace("{base}", "([a-z.0-9]+)")
-                            .replace("{form}", "(\\d+)")
-                    + "$",
-            Pattern.CASE_INSENSITIVE);
 
     public static void main(String[] args) throws IOException {
 
@@ -32,34 +23,26 @@ public class Main {
         );
         var processingResources = new ProcessingResources(locales);
 
-        Path sourceFile = Path.of("core/src/main/java/com/github/skykatik/t9n/", className + ".java");
+        Path sourceFile = Path.of("core/src/main/java", packageName.replace('.', '/'), className + ".java");
         Files.deleteIfExists(sourceFile);
 
-        try (var writer = Files.newBufferedWriter(sourceFile)) {
-            writer.append("package ");
-            writer.append(packageName);
-            writer.append(';');
+        try (var sink = new CharSink(Files.newBufferedWriter(sourceFile), indent, lineWrap)) {
+            sink.append("package ").append(packageName).append(';');
+            sink.ln(2);
 
-            writer.newLine();
-            writer.newLine();
+            sink.append("public final class ").append(className).append(" extends MessageSource");
+            sink.begin();
 
-            writer.append("public final class ");
-            writer.append(className);
-            writer.append(" extends MessageSource {");
-            writer.newLine();
+            generateLocaleTagConstants(locales, sink);
 
-            generateLocaleTagConstants(locales, writer);
+            sink.ln();
+            sink.append("public ").append(className).append("(int localeTag)");
+            sink.begin();
+            sink.append("super(localeTag);");
+            sink.end();
 
-            writer.newLine();
-            writer.append(indent).append("public ").append(className).append("(int localeTag) {");
-            writer.newLine();
-            writer.append(indent.repeat(2)).append("super(localeTag);");
-            writer.newLine();
-            writer.append(indent).append('}');
-            writer.newLine();
-
-            generateWithLocaleTagMethod(locales, writer);
-            generatePluralFormMethod(locales, writer);
+            generateWithLocaleTagMethod(locales, sink);
+            generatePluralFormMethod(locales, sink);
 
             var properties = new TreeMap<String, Property>();
 
@@ -86,12 +69,11 @@ public class Main {
                     String k = e.getKey();
                     String v = e.getValue();
 
-                    Matcher m;
-                    String baseKey = (m = PLURAL_KEY.matcher(k)).matches() ? m.group(1) : k;
+                    var parts = PropertyKeyNaming.instance().parse(k);
 
-                    var property = properties.get(baseKey);
+                    var property = properties.get(parts.baseKey());
                     if (property == null) {
-                        throw new IllegalStateException(baseKey);
+                        throw new IllegalStateException(parts.baseKey());
                     }
 
                     property.merge(settings, k, v);
@@ -99,181 +81,161 @@ public class Main {
             }
 
             for (var msg : properties.values()) {
-                writer.newLine();
-                writer.append(indent).append("public String ").append(msg.methodName());
-                writer.append('(');
+                sink.ln();
+                sink.append("public String ").append(msg.methodName()).append('(');
 
                 if (msg instanceof OrdinalProperty p) {
-                    generateOrdinalPropertyMethod(locales, writer, p);
+                    generateOrdinalPropertyMethod(locales, sink, p);
                 } else if (msg instanceof PluralProperty p) {
-                    generatePluralPropertyMethod(locales, writer, p);
+                    generatePluralPropertyMethod(locales, sink, p);
                 } else {
                     throw new IllegalStateException();
                 }
             }
 
-            writer.append('}');
-            writer.newLine();
+            sink.end();
         }
     }
 
-    private static void generatePluralPropertyMethod(List<LocaleSettings> locales, BufferedWriter writer, PluralProperty p) throws IOException {
-        writer.append("long amount");
-        writer.append(") {");
-        writer.newLine();
+    private static void generatePluralPropertyMethod(List<LocaleSettings> locales, CharSink sink, PluralProperty p) throws IOException {
+        sink.append("long amount").append(')');
+        sink.begin();
 
-        writer.append(indent.repeat(2)).append("int index = pluralForm(amount);");
-        writer.newLine();
+        sink.append("int index = pluralForm(amount);");
+        sink.ln();
 
-        writer.append(indent.repeat(2)).append("return switch (localeTag) {");
-        writer.newLine();
+        sink.append("return switch (localeTag)");
+        sink.begin();
 
         for (int localeTag = 0; localeTag < locales.size(); localeTag++) {
             var localeSettings = locales.get(localeTag);
 
-            writer.append(indent.repeat(3)).append("case ");
-            writer.append(localeSettings.localeTag);
-            writer.append(" -> switch (index) {");
-            writer.newLine();
+            sink.append("case ").append(localeSettings.localeTag).append(" -> switch (index)");
+            sink.begin();
 
             var pluralForms = p.messages[localeTag];
 
             for (int pluralForm = 0; pluralForm < pluralForms.length; pluralForm++) {
                 var message = pluralForms[pluralForm];
 
-                writer.append(indent.repeat(4)).append("case ").append(Integer.toString(pluralForm)).append(" -> ");
+                sink.append("case ").append(Integer.toString(pluralForm)).append(" -> ");
                 for (int i = 0, k = 0; i < message.tokens.length; i++) {
-                    writer.append(message.tokens[i]);
+                    sink.append(message.tokens[i]);
 
                     if (k < message.args.length) {
                         Arg arg = message.args[k++];
 
-                        writer.append(" + ");
-                        writer.append(arg.name);
+                        sink.append(" + ");
+                        sink.append(arg.name);
                     }
 
                     if (i != message.tokens.length - 1) {
-                        writer.append(" + ");
+                        sink.append(" + ");
                     }
                 }
-                writer.append(';');
-                writer.newLine();
+                sink.append(';');
+                sink.ln();
             }
 
-            writer.append(indent.repeat(4)).append("default -> throw new IllegalStateException();");;
-            writer.newLine();
-
-            writer.append(indent.repeat(3)).append("};");
-            writer.newLine();
+            sink.append("default -> throw new IllegalStateException();");
+            sink.endsc();
         }
 
-        writer.append(indent.repeat(3)).append("default -> throw new IllegalStateException();");
-        writer.newLine();
+        sink.append("default -> throw new IllegalStateException();");
+        sink.endsc();
 
-        writer.append(indent.repeat(2)).append("};");
-        writer.newLine();
-
-        writer.append(indent).append('}');
-        writer.newLine();
+        sink.end();
     }
 
-    private static void generateOrdinalPropertyMethod(List<LocaleSettings> locales, BufferedWriter writer, OrdinalProperty p) throws IOException {
+    private static void generateOrdinalPropertyMethod(List<LocaleSettings> locales, CharSink sink, OrdinalProperty p) throws IOException {
 
         var referenceMessage = p.messages[0];
         for (int i = 0; i < referenceMessage.args.length; i++) {
             Arg arg = referenceMessage.args[i];
-            writer.append(arg.type).append(" ").append(arg.name);
+            sink.append(arg.type).append(" ").append(arg.name);
 
             if (i != referenceMessage.args.length - 1) {
-                writer.append(", ");
+                sink.append(", ");
             }
         }
 
-        writer.append(") {");
-        writer.newLine();
-        writer.append(indent.repeat(2)).append("return switch (localeTag) {");
-        writer.newLine();
+        sink.append(')');
+        sink.begin();
 
+        sink.append("return switch (localeTag)");
+        sink.begin();
         for (int localeTag = 0; localeTag < locales.size(); localeTag++) {
             var localeSettings = locales.get(localeTag);
 
-            writer.append(indent.repeat(3)).append("case ");
-            writer.append(localeSettings.localeTag);
-            writer.append(" -> ");
+            sink.append("case ").append(localeSettings.localeTag).append(" -> ");
 
             var message = p.messages[localeTag];
             for (int i = 0, k = 0; i < message.tokens.length; i++) {
-                writer.append(message.tokens[i]);
+                sink.append(message.tokens[i]);
 
                 if (k < message.args.length) {
                     Arg arg = message.args[k++];
 
-                    writer.append(" + ");
-                    writer.append(arg.name);
+                    sink.append(" + ");
+                    sink.append(arg.name);
                 }
 
                 if (i != message.tokens.length - 1) {
-                    writer.append(" + ");
+                    sink.append(" + ");
                 }
             }
-            writer.append(';');
-            writer.newLine();
+
+            sink.append(';');
+            sink.ln();
         }
 
-        writer.append(indent.repeat(3)).append("default -> throw new IllegalStateException();");
-        writer.newLine();
+        sink.append("default -> throw new IllegalStateException();");
+        sink.endsc();
 
-        writer.append(indent.repeat(2)).append("};");
-        writer.newLine();
-
-        writer.append(indent).append('}');
-        writer.newLine();
+        sink.end();
     }
 
-    private static void generateLocaleTagConstants(List<LocaleSettings> locales, BufferedWriter writer) throws IOException {
+    private static void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
         for (int i = 0; i < locales.size(); i++) {
             var settings = locales.get(i);
-            writer.append(indent).append("public static final int ");
-            writer.append(settings.localeTag);
-            writer.append(" = ");
-            writer.append(Integer.toString(i));
-            writer.append(';');
-            writer.newLine();
+            sink.append("public static final int ");
+            sink.append(settings.localeTag);
+            sink.append(" = ");
+            sink.append(Integer.toString(i));
+            sink.append(';');
+            sink.ln();
         }
     }
 
-    private static void generatePluralFormMethod(List<LocaleSettings> locales, BufferedWriter writer) throws IOException {
-        writer.newLine();
-        writer.append(indent).append("public int pluralForm(long value) {");
-        writer.newLine();
-        writer.append(indent.repeat(2)).append("return switch (localeTag) {");
-        writer.newLine();
+    private static void generatePluralFormMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
+        sink.ln();
+
+        sink.append("public int pluralForm(long value)");
+        sink.begin();
+        sink.append("return switch (localeTag)");
+        sink.begin();
         for (var settings : locales) {
-            writer.append(indent.repeat(3)).append("case ").append(settings.localeTag);
-            writer.append(" -> ").append(settings.pluralFormFunction).append(';');
-            writer.newLine();
+            sink.append("case ").append(settings.localeTag).append(" -> ").append(settings.pluralFormFunction).append(';');
+            sink.ln();
         }
-        writer.append(indent.repeat(3)).append("default -> throw new IllegalStateException();");
-        writer.newLine();
-        writer.append(indent.repeat(2)).append("};");
-        writer.newLine();
-        writer.append(indent).append('}');
-        writer.newLine();
+        sink.append("default -> throw new IllegalStateException();");
+        sink.ln();
+        sink.endsc();
+        sink.end();
     }
 
-    private static void generateWithLocaleTagMethod(List<LocaleSettings> locales, BufferedWriter writer) throws IOException {
-        writer.newLine();
-        writer.append(indent).append("public ").append(className).append(" withLocaleTag(int localeTag) {");
-        writer.newLine();
-        writer.append(indent.repeat(2)).append("if (localeTag < 0 || localeTag > ");
-        writer.append(Integer.toString(locales.size())).append(") throw new IllegalArgumentException();");
-        writer.newLine();
-        writer.append(indent.repeat(2)).append("if (this.localeTag == localeTag) return this;");
-        writer.newLine();
-        writer.append(indent.repeat(2)).append("return new ").append(className).append("(localeTag);");
-        writer.newLine();
-        writer.append(indent).append('}');
-        writer.newLine();
+    private static void generateWithLocaleTagMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
+        sink.ln();
+
+        sink.append("public ").append(className).append(" withLocaleTag(int localeTag)");
+        sink.begin();
+        sink.append("if (localeTag < 0 || localeTag > ");
+        sink.append(Integer.toString(locales.size())).append(") throw new IllegalArgumentException();");
+        sink.ln();
+        sink.append("if (this.localeTag == localeTag) return this;");
+        sink.ln();
+        sink.append("return new ").append(className).append("(localeTag);");
+        sink.end();
     }
 
     private static String translateKeyToMethodName(String key) {
@@ -305,7 +267,7 @@ public class Main {
             var matcher = ARGS.matcher(text);
             int prev = 0;
             while (matcher.find()) {
-                tokens.add(quote(text.substring(prev, matcher.start())));
+                tokens.add(makeLiteral(text.substring(prev, matcher.start())));
                 String[] nameAndType = matcher.group(1).split(":");
                 String name = nameAndType[0];
                 String type = "String";
@@ -320,7 +282,7 @@ public class Main {
                 prev = matcher.end();
             }
             if (prev != text.length()) {
-                tokens.add(quote(text.substring(prev)));
+                tokens.add(makeLiteral(text.substring(prev)));
             }
 
             return new Message(args.toArray(EMPTY_ARG_ARRAY), tokens.toArray(EMPTY_STRING_ARRAY));
@@ -368,19 +330,11 @@ public class Main {
     record PluralProperty(String key, String methodName, Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
         @Override
         public void merge(LocaleSettings settings, String key, String text) {
-            var matcher = PLURAL_KEY.matcher(key);
-            if (!matcher.matches()) {
+            var parts = PropertyKeyNaming.instance().parse(key);
+            if (parts.pluralForm() == -1) {
                 throw new IllegalArgumentException("Ordinal property with plural: '" +
                         key + "' in locale: " + settings.locale);
             }
-
-            int pluralForm = Integer.parseInt(matcher.group(2));
-
-            // if (pluralForm < 0 || pluralForm >= messages[settings.localeTagValue].length) {
-            //     throw new IllegalArgumentException("Incorrect plural form for key '" + key +
-            //             "': " + pluralForm + " ('" + text + "'), plural forms count: " + settings.pluralFormsCount +
-            //             " in locale " + settings.locale);
-            // }
 
             var msg = Message.parse(text);
             var locale = messages[settings.localeTagValue];
@@ -388,7 +342,7 @@ public class Main {
                 messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
             }
 
-            locale[pluralForm] = msg;
+            locale[parts.pluralForm()] = msg;
         }
     }
 
@@ -396,17 +350,16 @@ public class Main {
 
         static Property parse(ProcessingResources processingResources,
                               LocaleSettings settings, String key, String text) {
-            var matcher = PLURAL_KEY.matcher(key);
-            if (matcher.matches()) {
-                int pluralForm = Integer.parseInt(matcher.group(2));
 
-                if (pluralForm < 0 || pluralForm >= settings.pluralFormsCount) {
+
+            var parts = PropertyKeyNaming.instance().parse(key);
+            if (parts.pluralForm() != -1) {
+
+                if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
                     throw new IllegalArgumentException("Incorrect plural form for key '" + key +
-                            "': " + pluralForm + ", plural forms count: " + settings.pluralFormsCount +
+                            "': " + parts.pluralForm() + ", plural forms count: " + settings.pluralFormsCount +
                             " in locale " + settings.locale);
                 }
-
-                key = matcher.group(1);
 
                 var msg = Message.parse(text);
                 var messages = new Message[processingResources.locales.size()][];
@@ -415,16 +368,17 @@ public class Main {
                 if (locale == null) {
                     messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
                 }
-                locale[pluralForm] = msg;
+                locale[parts.pluralForm()] = msg;
 
-                return new PluralProperty(key, translateKeyToMethodName(key), messages);
+                String baseKey = parts.baseKey();
+                return new PluralProperty(baseKey, translateKeyToMethodName(baseKey), messages);
             }
 
             var msg = Message.parse(text);
             var tokens = new Message[processingResources.locales.size()];
             tokens[settings.localeTagValue] = msg;
 
-            return new OrdinalProperty(key, translateKeyToMethodName(key), tokens);
+            return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), tokens);
         }
 
         String key();
@@ -434,8 +388,33 @@ public class Main {
         void merge(LocaleSettings settings, String key, String text);
     }
 
-    static String quote(String text) {
-        return "\"" + text + "\"";
+    static String escape(char c) {
+        return switch (c) {
+            case '\b' -> "\\b";
+            case '\f' -> "\\f";
+            case '\n' -> "\\n";
+            case '\r' -> "\\r";
+            case '\t' -> "\\t";
+            case '\'' -> "\\'";
+            case '\"' -> "\\\"";
+            case '\\' -> "\\\\";
+            default -> String.valueOf(c);
+        };
+    }
+
+    static String makeLiteral(String text) {
+        StringBuilder out = new StringBuilder(text.length() + 2);
+        out.append('"');
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\'') {
+                out.append(c);
+            } else {
+                out.append(escape(c));
+            }
+        }
+        out.append('"');
+        return out.toString();
     }
 
     static String translateLocaleToLocaleTag(Locale locale) {
