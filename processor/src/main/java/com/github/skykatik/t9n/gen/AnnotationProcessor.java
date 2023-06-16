@@ -18,7 +18,6 @@ import java.util.regex.Pattern;
 public class AnnotationProcessor extends AbstractProcessor {
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-
         var sources = roundEnv.getElementsAnnotatedWith(MessageSource.class);
         for (Element source : sources) {
             if (source instanceof PackageElement p &&
@@ -63,7 +62,7 @@ public class AnnotationProcessor extends AbstractProcessor {
 
             var locales = List.of(
                     new LocaleSettings(Locale.ROOT, 0, 4, "value == 1 ? 3 : value % 10 == 1 && value % 100 != 11 ? 0 : value % 10 >= 2 && value % 10 <= 4 && (value % 100 < 10 || value % 100 >= 20) ? 1 : 2"),
-                    new LocaleSettings(new Locale("en"), 1, 2, "value == 1 ? 0 : 1")
+                    new LocaleSettings(Locale.ENGLISH, 1, 2, "value == 1 ? 0 : 1")
             );
             var processingResources = new ProcessingResources(locales);
 
@@ -74,7 +73,6 @@ public class AnnotationProcessor extends AbstractProcessor {
             sink.append("import java.util.Objects;").ln();
             sink.append("import com.github.skykatik.t9n.MessageSource;").ln();
             sink.append("import com.github.skykatik.t9n.LocaleTag;").ln();
-            // TODO library imports
             sink.ln();
 
             sink.append("public final class ").append(className).append(" extends MessageSource");
@@ -381,32 +379,58 @@ public class AnnotationProcessor extends AbstractProcessor {
         return new String(result, 0, d);
     }
 
-    static final Pattern ARGS = Pattern.compile("\\{([a-z0-9:{}\\[\\]]+)}", Pattern.CASE_INSENSITIVE);
+    static final Pattern ARGS = Pattern.compile("\\{(\\d+:)?([a-z0-9:{}\\[\\]]+)}", Pattern.CASE_INSENSITIVE);
+
+    private static final int REFERENCE_LOCALE_TAG = 0;
 
     record Message(Arg[] args, String[] tokens) {
 
-        static Message parse(String text) {
+        static Message parse(LocaleSettings settings, String text) {
             var tokens = new ArrayList<String>();
             var args = new ArrayList<Arg>();
             var matcher = ARGS.matcher(text);
+            int argPos = 0;
             int prev = 0;
             while (matcher.find()) {
                 tokens.add(makeLiteral(text.substring(prev, matcher.start())));
-                String[] nameAndType = matcher.group(1).split(":");
+
+                String[] nameAndType = matcher.group(2).split(":");
                 String name = nameAndType[0];
                 String type = "String";
                 if (nameAndType.length == 2) {
                     type = typeOf(nameAndType[1]);
                 }
 
-                String transformation = null;
+                String posStr = matcher.group(1);
+                int pos;
+                if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                    if (posStr == null) {
+                        throw new IllegalArgumentException("Argument '" + name + "' in reference locale must be indexed");
+                    }
 
-                args.add(new Arg(type, name, transformation));
+                    pos = Integer.parseInt(posStr.substring(0, posStr.length() - 1));
+
+                    if (pos < 0) {
+                        throw new IllegalArgumentException("Negative position for arg: '" + name + "' in reference locale");
+                    }
+                } else {
+                    if (posStr != null) {
+                        throw new IllegalArgumentException("Mixed argument '" + name + "'");
+                    }
+
+                    pos = argPos++;
+                }
+
+                args.add(new Arg(pos, type, name));
 
                 prev = matcher.end();
             }
             if (prev != text.length()) {
                 tokens.add(makeLiteral(text.substring(prev)));
+            }
+
+            if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                args.sort(Comparator.comparingInt(c -> c.pos));
             }
 
             return new Message(args.toArray(EMPTY_ARG_ARRAY), tokens.toArray(EMPTY_STRING_ARRAY));
@@ -432,13 +456,12 @@ public class AnnotationProcessor extends AbstractProcessor {
         }
     }
 
-    record Arg(String type, String name, String transformation) {
-    }
+    record Arg(int pos, String type, String name) {}
 
     record OrdinalProperty(String key, String methodName, Message[/*localeTag*/] messages) implements Property {
         @Override
         public void merge(LocaleSettings settings, String key, String text) {
-            messages[settings.localeTagValue] = Message.parse(text);
+            messages[settings.localeTagValue] = Message.parse(settings, text);
         }
 
         @Override
@@ -461,7 +484,7 @@ public class AnnotationProcessor extends AbstractProcessor {
                         key + "' in locale: " + settings.locale);
             }
 
-            var msg = Message.parse(text);
+            var msg = Message.parse(settings, text);
             var locale = messages[settings.localeTagValue];
             if (locale == null) {
                 messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
@@ -486,7 +509,7 @@ public class AnnotationProcessor extends AbstractProcessor {
                             " in locale " + settings.locale);
                 }
 
-                var msg = Message.parse(text);
+                var msg = Message.parse(settings, text);
                 var messages = new Message[processingResources.locales.size()][];
 
                 var locale = messages[settings.localeTagValue];
@@ -499,7 +522,7 @@ public class AnnotationProcessor extends AbstractProcessor {
                 return new PluralProperty(baseKey, translateKeyToMethodName(baseKey), messages);
             }
 
-            var msg = Message.parse(text);
+            var msg = Message.parse(settings, text);
             var tokens = new Message[processingResources.locales.size()];
             tokens[settings.localeTagValue] = msg;
 
