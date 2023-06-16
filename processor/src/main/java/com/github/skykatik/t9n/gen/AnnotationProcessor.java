@@ -33,7 +33,6 @@ public class AnnotationProcessor extends AbstractProcessor {
                 }
             }
         }
-
         return true;
     }
 
@@ -98,7 +97,7 @@ public class AnnotationProcessor extends AbstractProcessor {
 
             var properties = new TreeMap<String, Property>();
 
-            var referenceSettings = locales.get(0);
+            var referenceSettings = locales.get(REFERENCE_LOCALE_TAG);
             var referenceBundle = loadProperties(annotation.baseName(), referenceSettings.locale);
             for (var e : referenceBundle.entrySet()) {
                 String key = e.getKey();
@@ -202,12 +201,15 @@ public class AnnotationProcessor extends AbstractProcessor {
 
     static void generateOrdinalPropertyMethod(List<LocaleSettings> locales, CharSink sink, OrdinalProperty p) throws IOException {
 
-        var referenceMessage = p.messages[0];
-        for (int i = 0; i < referenceMessage.args.length; i++) {
-            Arg arg = referenceMessage.args[i];
+        var referenceMessage = p.messages[REFERENCE_LOCALE_TAG];
+        Arg[] sortedArgs = new Arg[referenceMessage.args.length];
+        System.arraycopy(referenceMessage.args, 0, sortedArgs, 0, referenceMessage.args.length);
+        Arrays.sort(sortedArgs, Comparator.comparingInt(c -> c.pos));
+        for (int i = 0; i < sortedArgs.length; i++) {
+            Arg arg = sortedArgs[i];
             sink.append(arg.type).append(" ").append(arg.name);
 
-            if (i != referenceMessage.args.length - 1) {
+            if (i != sortedArgs.length - 1) {
                 sink.append(", ");
             }
         }
@@ -429,10 +431,6 @@ public class AnnotationProcessor extends AbstractProcessor {
                 tokens.add(makeLiteral(text.substring(prev)));
             }
 
-            if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
-                args.sort(Comparator.comparingInt(c -> c.pos));
-            }
-
             return new Message(args.toArray(EMPTY_ARG_ARRAY), tokens.toArray(EMPTY_STRING_ARRAY));
         }
 
@@ -614,24 +612,24 @@ public class AnnotationProcessor extends AbstractProcessor {
         String country = locale.getCountry();
         String variant = locale.getVariant();
 
-        if (language == "" && country == "" && variant == "") {
+        if (language.isEmpty() && country.isEmpty() && variant.isEmpty()) {
             return baseName;
         }
 
         StringBuilder sb = new StringBuilder(baseName);
         sb.append('_');
-        if (script != "") {
-            if (variant != "") {
+        if (!script.isEmpty()) {
+            if (!variant.isEmpty()) {
                 sb.append(language).append('_').append(script).append('_').append(country).append('_').append(variant);
-            } else if (country != "") {
+            } else if (!country.isEmpty()) {
                 sb.append(language).append('_').append(script).append('_').append(country);
             } else {
                 sb.append(language).append('_').append(script);
             }
         } else {
-            if (variant != "") {
+            if (!variant.isEmpty()) {
                 sb.append(language).append('_').append(country).append('_').append(variant);
-            } else if (country != "") {
+            } else if (!country.isEmpty()) {
                 sb.append(language).append('_').append(country);
             } else {
                 sb.append(language);
