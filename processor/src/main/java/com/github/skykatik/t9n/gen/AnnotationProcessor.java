@@ -1,42 +1,86 @@
 package com.github.skykatik.t9n.gen;
 
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.annotation.processing.SupportedAnnotationTypes;
+import javax.annotation.processing.SupportedSourceVersion;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.*;
+import javax.tools.StandardLocation;
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.regex.Pattern;
 
-public class Main {
+@SupportedAnnotationTypes("com.github.skykatik.t9n.gen.MessageSource")
+@SupportedSourceVersion(SourceVersion.RELEASE_17)
+public class AnnotationProcessor extends AbstractProcessor {
+    @Override
+    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+
+        var sources = roundEnv.getElementsAnnotatedWith(MessageSource.class);
+        for (Element source : sources) {
+            if (source instanceof PackageElement p &&
+                    p.getEnclosingElement() instanceof ModuleElement m) {
+
+                var qualifiedName = p.getQualifiedName();
+                var ann = p.getAnnotation(MessageSource.class);
+
+                try {
+                    generate(source, m.getQualifiedName(), qualifiedName, ann);
+                } catch (IOException e) {
+                    throw new UncheckedIOException("Failed to generate bundle class", e);
+                }
+            }
+        }
+
+        return true;
+    }
+
     static final String indent = " ".repeat(4);
     static final int lineWrap = 120;
 
-    static final String className = "CustomMessageSource";
-    static final String packageName = "com.github.skykatik.t9n";
+    String className;
+    String packageName;
+    String moduleName;
+    String moduleAndPackageNames;
 
-    public static void main(String[] args) throws IOException {
+    void generate(Element source, Name moduleName, Name packageName, MessageSource annotation) throws IOException {
+        className = annotation.className();
+        this.packageName = packageName.toString();
+        this.moduleName = moduleName.toString();
 
-        var locales = List.of(
-                new LocaleSettings(Locale.ROOT, 0, 4, "value == 1 ? 3 : value % 10 == 1 && value % 100 != 11 ? 0 : value % 10 >= 2 && value % 10 <= 4 && (value % 100 < 10 || value % 100 >= 20) ? 1 : 2"),
-                new LocaleSettings(new Locale("en"), 1, 2, "value == 1 ? 0 : 1")
-        );
-        var processingResources = new ProcessingResources(locales);
+        if (!this.moduleName.isEmpty()) {
+            moduleAndPackageNames = this.moduleName + "/" + this.packageName;
+        } else {
+            moduleAndPackageNames = this.packageName;
+        }
 
-        Path sourceFile = Path.of("core/src/main/java", packageName.replace('.', '/'), className + ".java");
-        Files.deleteIfExists(sourceFile);
+        String name = moduleAndPackageNames + "." + className;
+        var sourceFile = processingEnv.getFiler().createSourceFile(name, source);
+        try (CharSink sink = new CharSink(sourceFile.openWriter(), indent, lineWrap)) {
 
-        try (var sink = new CharSink(Files.newBufferedWriter(sourceFile), indent, lineWrap)) {
-            sink.append("package ").append(packageName).append(';');
+            var locales = List.of(
+                    new LocaleSettings(Locale.ROOT, 0, 4, "value == 1 ? 3 : value % 10 == 1 && value % 100 != 11 ? 0 : value % 10 >= 2 && value % 10 <= 4 && (value % 100 < 10 || value % 100 >= 20) ? 1 : 2"),
+                    new LocaleSettings(new Locale("en"), 1, 2, "value == 1 ? 0 : 1")
+            );
+            var processingResources = new ProcessingResources(locales);
+
+            sink.append("package ").append(this.packageName).append(';');
             sink.ln(2);
 
             sink.append("import java.util.Locale;").ln();
             sink.append("import java.util.Objects;").ln();
+            sink.append("import com.github.skykatik.t9n.MessageSource;").ln();
+            sink.append("import com.github.skykatik.t9n.LocaleTag;").ln();
             // TODO library imports
             sink.ln();
 
             sink.append("public final class ").append(className).append(" extends MessageSource");
             sink.begin();
 
-            sink.append("private final LocaleTag localeTag;");
+            sink.append("final LocaleTag localeTag;");
             sink.ln();
 
             sink.ln();
@@ -57,7 +101,7 @@ public class Main {
             var properties = new TreeMap<String, Property>();
 
             var referenceSettings = locales.get(0);
-            var referenceBundle = loadProperties("messages", referenceSettings.locale);
+            var referenceBundle = loadProperties(annotation.baseName(), referenceSettings.locale);
             for (var e : referenceBundle.entrySet()) {
                 String key = e.getKey();
                 String text = e.getValue();
@@ -74,7 +118,7 @@ public class Main {
 
             for (int i = 1; i < locales.size(); i++) {
                 var settings = locales.get(i);
-                var bundle = loadProperties("messages", settings.locale);
+                var bundle = loadProperties(annotation.baseName(), settings.locale);
                 for (var e : bundle.entrySet()) {
                     String k = e.getKey();
                     String v = e.getValue();
@@ -109,7 +153,7 @@ public class Main {
         }
     }
 
-    private static void generatePluralPropertyMethod(List<LocaleSettings> locales, CharSink sink, PluralProperty p) throws IOException {
+    static void generatePluralPropertyMethod(List<LocaleSettings> locales, CharSink sink, PluralProperty p) throws IOException {
         sink.append("long amount").append(')');
         sink.begin();
 
@@ -158,7 +202,7 @@ public class Main {
         sink.end();
     }
 
-    private static void generateOrdinalPropertyMethod(List<LocaleSettings> locales, CharSink sink, OrdinalProperty p) throws IOException {
+    static void generateOrdinalPropertyMethod(List<LocaleSettings> locales, CharSink sink, OrdinalProperty p) throws IOException {
 
         var referenceMessage = p.messages[0];
         for (int i = 0; i < referenceMessage.args.length; i++) {
@@ -206,7 +250,7 @@ public class Main {
         sink.end();
     }
 
-    private static void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
+    static void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
         sink.ln();
         sink.append("public enum LocaleTag implements com.github.skykatik.t9n.LocaleTag");
         sink.begin();
@@ -228,7 +272,7 @@ public class Main {
         sink.append(';');
         sink.ln(2);
 
-        sink.append("private final Locale locale;");
+        sink.append("final Locale locale;");
         sink.ln(2);
 
         sink.append("LocaleTag(Locale locale)");
@@ -245,14 +289,53 @@ public class Main {
         sink.end();
     }
 
-    private static String localeToString(Locale locale) {
+    static String localeToString(Locale locale) {
         if (locale.equals(Locale.ROOT)) {
             return "Locale.ROOT";
+        } else if (locale.equals(Locale.ENGLISH)) {
+            return "Locale.ENGLISH";
+        } else if (locale.equals(Locale.FRENCH)) {
+            return "Locale.FRENCH";
+        } else if (locale.equals(Locale.GERMAN)) {
+            return "Locale.GERMAN";
+        } else if (locale.equals(Locale.ITALIAN)) {
+            return "Locale.ITALIAN";
+        } else if (locale.equals(Locale.JAPANESE)) {
+            return "Locale.JAPANESE";
+        } else if (locale.equals(Locale.KOREAN)) {
+            return "Locale.KOREAN";
+        } else if (locale.equals(Locale.CHINESE)) {
+            return "Locale.CHINESE";
+        } else if (locale.equals(Locale.SIMPLIFIED_CHINESE)) {
+            return "Locale.SIMPLIFIED_CHINESE";
+        } else if (locale.equals(Locale.TRADITIONAL_CHINESE)) {
+            return "Locale.TRADITIONAL_CHINESE";
+        } else if (locale.equals(Locale.FRANCE)) {
+            return "Locale.FRANCE";
+        } else if (locale.equals(Locale.GERMANY)) {
+            return "Locale.GERMANY";
+        } else if (locale.equals(Locale.ITALY)) {
+            return "Locale.ITALY";
+        } else if (locale.equals(Locale.JAPAN)) {
+            return "Locale.JAPAN";
+        } else if (locale.equals(Locale.KOREA)) {
+            return "Locale.KOREA";
+        } else if (locale.equals(Locale.UK)) {
+            return "Locale.UK";
+        } else if (locale.equals(Locale.US)) {
+            return "Locale.US";
+        } else if (locale.equals(Locale.CANADA)) {
+            return "Locale.CANADA";
+        } else if (locale.equals(Locale.CANADA_FRENCH)) {
+            return "Locale.CANADA_FRENCH";
         }
-        return "new Locale(" + makeLiteral(locale.toString()) + ')';
+
+        String s = String.join(", ", makeLiteral(locale.getLanguage()),
+                makeLiteral(locale.getCountry()), makeLiteral(locale.getVariant()));
+        return "new Locale(" + s + ')';
     }
 
-    private static void generatePluralFormMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
+    static void generatePluralFormMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
         sink.ln();
 
         sink.append("public int pluralForm(long value)");
@@ -268,7 +351,7 @@ public class Main {
         sink.end();
     }
 
-    private static void generateWithLocaleTagMethod(CharSink sink) throws IOException {
+    void generateWithLocaleTagMethod(CharSink sink) throws IOException {
         sink.ln();
 
         sink.append("public ").append(className).append(" withLocaleTag(LocaleTag localeTag)");
@@ -279,7 +362,7 @@ public class Main {
         sink.end();
     }
 
-    private static String translateKeyToMethodName(String key) {
+    static String translateKeyToMethodName(String key) {
         char[] result = new char[key.length()];
         int d = 0;
         boolean prevIsDot = false;
@@ -368,7 +451,8 @@ public class Main {
         }
     }
 
-    record PluralProperty(String key, String methodName, Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
+    record PluralProperty(String key, String methodName,
+                          Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
         @Override
         public void merge(LocaleSettings settings, String key, String text) {
             var parts = PropertyKeyNaming.instance().parse(key);
@@ -474,13 +558,22 @@ public class Main {
     }
 
     record ProcessingResources(List<LocaleSettings> locales) {
-
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    static Map<String, String> loadProperties(String baseName, Locale locale) throws IOException {
-        Path p = Path.of("core/src/main/resources", toBundleName(baseName, locale) + ".properties");
-        try (var reader = Files.newBufferedReader(p)) {
+    Map<String, String> loadProperties(String baseName, Locale locale) throws IOException {
+        int endOfPackage = baseName.lastIndexOf('.');
+        String resourcePackage = endOfPackage != -1 ? '.' + baseName.substring(0, endOfPackage) : "";
+        String resourceName = endOfPackage != -1 ? baseName.substring(endOfPackage + 1) : baseName;
+
+        String bundleName = toBundleName(resourceName, locale) + ".properties";
+
+        var resource = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, packageName + resourcePackage, bundleName);
+        if (resource == null) {
+            throw new FileNotFoundException(baseName);
+        }
+
+        try (var reader = resource.openReader(false)) {
             var props = new Properties();
             props.load(reader);
             var map = new HashMap(props);

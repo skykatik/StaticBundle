@@ -1,4 +1,5 @@
-rootProject.name = "T9N"
+rootProject.name = "StaticBundle"
 
 include("core")
 include("processor")
+include("test")

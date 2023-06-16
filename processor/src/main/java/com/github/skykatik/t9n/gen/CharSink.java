@@ -167,6 +167,10 @@ public class CharSink implements Closeable {
         return this;
     }
 
+    public Writer writer() {
+        return writer.writer;
+    }
+
     @Override
     public void close() throws IOException {
         writer.close();
