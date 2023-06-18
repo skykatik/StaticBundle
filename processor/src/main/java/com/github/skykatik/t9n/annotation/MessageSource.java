@@ -1,4 +1,4 @@
-package com.github.skykatik.t9n.gen;
+package com.github.skykatik.t9n.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -12,4 +12,6 @@ public @interface MessageSource {
     String className();
 
     String baseName();
+
+    LocaleSettings[] settings();
 }

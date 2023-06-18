@@ -1,11 +1,14 @@
 package com.github.skykatik.t9n.gen;
 
+import com.github.skykatik.t9n.annotation.MessageSource;
+
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
+import javax.tools.Diagnostic;
 import javax.tools.StandardLocation;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -13,7 +16,7 @@ import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.regex.Pattern;
 
-@SupportedAnnotationTypes("com.github.skykatik.t9n.gen.MessageSource")
+@SupportedAnnotationTypes("com.github.skykatik.t9n.annotation.MessageSource")
 @SupportedSourceVersion(SourceVersion.RELEASE_17)
 public class AnnotationProcessor extends AbstractProcessor {
     @Override
@@ -25,6 +28,12 @@ public class AnnotationProcessor extends AbstractProcessor {
 
                 var qualifiedName = p.getQualifiedName();
                 var ann = p.getAnnotation(MessageSource.class);
+
+                if (ann.settings().length == 0) {
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                            "settings() attribute must contains at least one setting", p);
+                    return true;
+                }
 
                 try {
                     generate(source, m.getQualifiedName(), qualifiedName, ann);
@@ -50,21 +59,34 @@ public class AnnotationProcessor extends AbstractProcessor {
         this.moduleName = moduleName.toString();
 
         if (!this.moduleName.isEmpty()) {
-            moduleAndPackageNames = this.moduleName + "/" + this.packageName;
+            moduleAndPackageNames = this.moduleName + "." + this.packageName;
         } else {
             moduleAndPackageNames = this.packageName;
         }
 
         String name = moduleAndPackageNames + "." + className;
         var sourceFile = processingEnv.getFiler().createSourceFile(name, source);
+
+        var arr = annotation.settings();
+        var locales = new ArrayList<LocaleSettings>(arr.length);
+        for (int i = 0; i < arr.length; i++) {
+            var ann = arr[i];
+            String[] parts = ann.locale().split("_");
+            Locale locale;
+            if (parts.length == 3) {
+                locale = new Locale(parts[0], parts[1], parts[2]);
+            } else if (parts.length == 2) {
+                locale = new Locale(parts[0], parts[1]);
+            } else {
+                locale = new Locale(parts[0]);
+            }
+
+            locales.add(new LocaleSettings(locale, i, ann.pluralForms(), ann.pluralFunction()));
+        }
+
+        var processingResources = new ProcessingResources(locales);
+
         try (CharSink sink = new CharSink(sourceFile.openWriter(), indent, lineWrap)) {
-
-            var locales = List.of(
-                    new LocaleSettings(Locale.ROOT, 0, 4, "value == 1 ? 3 : value % 10 == 1 && value % 100 != 11 ? 0 : value % 10 >= 2 && value % 10 <= 4 && (value % 100 < 10 || value % 100 >= 20) ? 1 : 2"),
-                    new LocaleSettings(Locale.ENGLISH, 1, 2, "value == 1 ? 0 : 1")
-            );
-            var processingResources = new ProcessingResources(locales);
-
             sink.append("package ").append(this.packageName).append(';');
             sink.ln(2);
 
