@@ -9,6 +9,7 @@ import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.tools.Diagnostic;
+import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -611,9 +612,23 @@ public class AnnotationProcessor extends AbstractProcessor {
 
         String bundleName = toBundleName(resourceName, locale) + ".properties";
 
-        var resource = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, packageName + resourcePackage, bundleName);
-        if (resource == null) {
-            throw new FileNotFoundException(baseName);
+        FileObject resource;
+        try {
+            resource = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, packageName + resourcePackage, bundleName);
+        } catch (FileNotFoundException e) {
+            String fileName = packageName + resourcePackage;
+            if (!resourcePackage.isEmpty()) {
+                fileName += '.' + bundleName;
+            }
+            fileName = fileName.replace('.', '/');
+            if (!fileName.isEmpty()) {
+                fileName += '.' + bundleName;
+            } else {
+                fileName += bundleName;
+            }
+
+            String localeMasked = locale.equals(Locale.ROOT) ? "ROOT" : locale.toString();
+            throw new FileNotFoundException("No properties file found with name " + fileName + " for locale: " + localeMasked);
         }
 
         try (var reader = resource.openReader(false)) {
