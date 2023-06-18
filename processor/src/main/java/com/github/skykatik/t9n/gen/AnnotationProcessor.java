@@ -20,6 +20,17 @@ import java.util.regex.Pattern;
 @SupportedAnnotationTypes("com.github.skykatik.t9n.annotation.MessageSource")
 @SupportedSourceVersion(SourceVersion.RELEASE_17)
 public class AnnotationProcessor extends AbstractProcessor {
+
+    static final int REFERENCE_LOCALE_TAG = 0;
+    static final Pattern ARGS = Pattern.compile("\\{(\\d+:)?([a-z0-9:{}\\[\\]]+)}", Pattern.CASE_INSENSITIVE);
+    static final String indent = " ".repeat(4);
+    static final int lineWrap = 120;
+
+    String className;
+    String packageName;
+    String moduleName;
+    String moduleAndPackageNames;
+
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         var sources = roundEnv.getElementsAnnotatedWith(MessageSource.class);
@@ -45,14 +56,6 @@ public class AnnotationProcessor extends AbstractProcessor {
         }
         return true;
     }
-
-    static final String indent = " ".repeat(4);
-    static final int lineWrap = 120;
-
-    String className;
-    String packageName;
-    String moduleName;
-    String moduleAndPackageNames;
 
     void generate(Element source, Name moduleName, Name packageName, MessageSource annotation) throws IOException {
         className = annotation.className();
@@ -267,13 +270,12 @@ public class AnnotationProcessor extends AbstractProcessor {
             sink.ln();
         }
 
-        sink.append("default -> throw new IllegalStateException();");
         sink.endsc();
 
         sink.end();
     }
 
-    static void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
+    void generateLocaleTagConstants(List<LocaleSettings> locales, CharSink sink) throws IOException {
         sink.ln();
         sink.append("public enum LocaleTag implements com.github.skykatik.t9n.LocaleTag");
         sink.begin();
@@ -310,6 +312,68 @@ public class AnnotationProcessor extends AbstractProcessor {
         sink.end();
 
         sink.end();
+    }
+
+    void generatePluralFormMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
+        sink.ln();
+
+        sink.append("public int pluralForm(long value)");
+        sink.begin();
+        sink.append("return switch (localeTag)");
+        sink.begin();
+        for (var settings : locales) {
+            sink.append("case ").append(settings.localeTag).append(" -> ").append(settings.pluralFormFunction).append(';');
+            sink.ln();
+        }
+
+        sink.endsc();
+        sink.end();
+    }
+
+    void generateWithLocaleTagMethod(CharSink sink) throws IOException {
+        sink.ln();
+
+        sink.append("public ").append(className).append(" withLocaleTag(LocaleTag localeTag)");
+        sink.begin();
+        sink.append("if (this.localeTag == localeTag) return this;");
+        sink.ln();
+        sink.append("return new ").append(className).append("(localeTag);");
+        sink.end();
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    Map<String, String> loadProperties(String baseName, Locale locale) throws IOException {
+        int endOfPackage = baseName.lastIndexOf('.');
+        String resourcePackage = endOfPackage != -1 ? '.' + baseName.substring(0, endOfPackage) : "";
+        String resourceName = endOfPackage != -1 ? baseName.substring(endOfPackage + 1) : baseName;
+
+        String bundleName = toBundleName(resourceName, locale) + ".properties";
+
+        FileObject resource;
+        try {
+            resource = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, packageName + resourcePackage, bundleName);
+        } catch (FileNotFoundException e) {
+            String fileName = packageName + resourcePackage;
+            if (!resourcePackage.isEmpty()) {
+                fileName += '.' + bundleName;
+            }
+            fileName = fileName.replace('.', '/');
+            if (!fileName.isEmpty()) {
+                fileName += '.' + bundleName;
+            } else {
+                fileName += bundleName;
+            }
+
+            String localeMasked = locale.equals(Locale.ROOT) ? "ROOT" : locale.toString();
+            throw new FileNotFoundException("No properties file found with name " + fileName + " for locale: " + localeMasked);
+        }
+
+        try (var reader = resource.openReader(false)) {
+            var props = new Properties();
+            props.load(reader);
+            var map = new HashMap(props);
+            return (Map<String, String>) map;
+        }
     }
 
     static String localeToString(Locale locale) {
@@ -358,33 +422,6 @@ public class AnnotationProcessor extends AbstractProcessor {
         return "new Locale(" + s + ')';
     }
 
-    static void generatePluralFormMethod(List<LocaleSettings> locales, CharSink sink) throws IOException {
-        sink.ln();
-
-        sink.append("public int pluralForm(long value)");
-        sink.begin();
-        sink.append("return switch (localeTag)");
-        sink.begin();
-        for (var settings : locales) {
-            sink.append("case ").append(settings.localeTag).append(" -> ").append(settings.pluralFormFunction).append(';');
-            sink.ln();
-        }
-
-        sink.endsc();
-        sink.end();
-    }
-
-    void generateWithLocaleTagMethod(CharSink sink) throws IOException {
-        sink.ln();
-
-        sink.append("public ").append(className).append(" withLocaleTag(LocaleTag localeTag)");
-        sink.begin();
-        sink.append("if (this.localeTag == localeTag) return this;");
-        sink.ln();
-        sink.append("return new ").append(className).append("(localeTag);");
-        sink.end();
-    }
-
     static String translateKeyToMethodName(String key) {
         char[] result = new char[key.length()];
         int d = 0;
@@ -404,9 +441,91 @@ public class AnnotationProcessor extends AbstractProcessor {
         return new String(result, 0, d);
     }
 
-    static final Pattern ARGS = Pattern.compile("\\{(\\d+:)?([a-z0-9:{}\\[\\]]+)}", Pattern.CASE_INSENSITIVE);
+    static String escape(char c) {
+        return switch (c) {
+            case '\b' -> "\\b";
+            case '\f' -> "\\f";
+            case '\n' -> "\\n";
+            case '\r' -> "\\r";
+            case '\t' -> "\\t";
+            case '\'' -> "\\'";
+            case '\"' -> "\\\"";
+            case '\\' -> "\\\\";
+            default -> String.valueOf(c);
+        };
+    }
 
-    private static final int REFERENCE_LOCALE_TAG = 0;
+    static String makeLiteral(String text) {
+        StringBuilder out = new StringBuilder(text.length() + 2);
+        out.append('"');
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\'') {
+                out.append(c);
+            } else {
+                out.append(escape(c));
+            }
+        }
+        out.append('"');
+        return out.toString();
+    }
+
+    static String translateLocaleToLocaleTag(Locale locale) {
+        if (locale.equals(Locale.ROOT)) {
+            return "ROOT";
+        }
+        return locale.toString().toUpperCase(Locale.ROOT);
+    }
+
+    static String toBundleName(String baseName, Locale locale) {
+        if (locale == Locale.ROOT) {
+            return baseName;
+        }
+
+        String language = locale.getLanguage();
+        String script = locale.getScript();
+        String country = locale.getCountry();
+        String variant = locale.getVariant();
+
+        if (language.isEmpty() && country.isEmpty() && variant.isEmpty()) {
+            return baseName;
+        }
+
+        StringBuilder sb = new StringBuilder(baseName);
+        sb.append('_');
+        if (!script.isEmpty()) {
+            if (!variant.isEmpty()) {
+                sb.append(language).append('_').append(script).append('_').append(country).append('_').append(variant);
+            } else if (!country.isEmpty()) {
+                sb.append(language).append('_').append(script).append('_').append(country);
+            } else {
+                sb.append(language).append('_').append(script);
+            }
+        } else {
+            if (!variant.isEmpty()) {
+                sb.append(language).append('_').append(country).append('_').append(variant);
+            } else if (!country.isEmpty()) {
+                sb.append(language).append('_').append(country);
+            } else {
+                sb.append(language);
+            }
+        }
+        return sb.toString();
+
+    }
+
+    record LocaleSettings(Locale locale, String localeTag, int localeTagValue,
+                          int pluralFormsCount, String pluralFormFunction) {
+
+        LocaleSettings(Locale locale, int localeTagValue, int pluralFormsCount, String pluralFormFunction) {
+            this(locale, translateLocaleToLocaleTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
+        }
+
+    }
+
+    record ProcessingResources(List<LocaleSettings> locales) {
+
+    }
 
     record Message(Arg[] args, String[] tokens) {
 
@@ -555,124 +674,5 @@ public class AnnotationProcessor extends AbstractProcessor {
         String methodName();
 
         void merge(LocaleSettings settings, String key, String text);
-    }
-
-    static String escape(char c) {
-        return switch (c) {
-            case '\b' -> "\\b";
-            case '\f' -> "\\f";
-            case '\n' -> "\\n";
-            case '\r' -> "\\r";
-            case '\t' -> "\\t";
-            case '\'' -> "\\'";
-            case '\"' -> "\\\"";
-            case '\\' -> "\\\\";
-            default -> String.valueOf(c);
-        };
-    }
-
-    static String makeLiteral(String text) {
-        StringBuilder out = new StringBuilder(text.length() + 2);
-        out.append('"');
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == '\'') {
-                out.append(c);
-            } else {
-                out.append(escape(c));
-            }
-        }
-        out.append('"');
-        return out.toString();
-    }
-
-    static String translateLocaleToLocaleTag(Locale locale) {
-        if (locale.equals(Locale.ROOT)) {
-            return "ROOT";
-        }
-        return locale.toString().toUpperCase(Locale.ROOT);
-    }
-
-    record LocaleSettings(Locale locale, String localeTag, int localeTagValue,
-                          int pluralFormsCount, String pluralFormFunction) {
-
-        LocaleSettings(Locale locale, int localeTagValue, int pluralFormsCount, String pluralFormFunction) {
-            this(locale, translateLocaleToLocaleTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
-        }
-    }
-
-    record ProcessingResources(List<LocaleSettings> locales) {
-    }
-
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    Map<String, String> loadProperties(String baseName, Locale locale) throws IOException {
-        int endOfPackage = baseName.lastIndexOf('.');
-        String resourcePackage = endOfPackage != -1 ? '.' + baseName.substring(0, endOfPackage) : "";
-        String resourceName = endOfPackage != -1 ? baseName.substring(endOfPackage + 1) : baseName;
-
-        String bundleName = toBundleName(resourceName, locale) + ".properties";
-
-        FileObject resource;
-        try {
-            resource = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, packageName + resourcePackage, bundleName);
-        } catch (FileNotFoundException e) {
-            String fileName = packageName + resourcePackage;
-            if (!resourcePackage.isEmpty()) {
-                fileName += '.' + bundleName;
-            }
-            fileName = fileName.replace('.', '/');
-            if (!fileName.isEmpty()) {
-                fileName += '.' + bundleName;
-            } else {
-                fileName += bundleName;
-            }
-
-            String localeMasked = locale.equals(Locale.ROOT) ? "ROOT" : locale.toString();
-            throw new FileNotFoundException("No properties file found with name " + fileName + " for locale: " + localeMasked);
-        }
-
-        try (var reader = resource.openReader(false)) {
-            var props = new Properties();
-            props.load(reader);
-            var map = new HashMap(props);
-            return (Map<String, String>) map;
-        }
-    }
-
-    static String toBundleName(String baseName, Locale locale) {
-        if (locale == Locale.ROOT) {
-            return baseName;
-        }
-
-        String language = locale.getLanguage();
-        String script = locale.getScript();
-        String country = locale.getCountry();
-        String variant = locale.getVariant();
-
-        if (language.isEmpty() && country.isEmpty() && variant.isEmpty()) {
-            return baseName;
-        }
-
-        StringBuilder sb = new StringBuilder(baseName);
-        sb.append('_');
-        if (!script.isEmpty()) {
-            if (!variant.isEmpty()) {
-                sb.append(language).append('_').append(script).append('_').append(country).append('_').append(variant);
-            } else if (!country.isEmpty()) {
-                sb.append(language).append('_').append(script).append('_').append(country);
-            } else {
-                sb.append(language).append('_').append(script);
-            }
-        } else {
-            if (!variant.isEmpty()) {
-                sb.append(language).append('_').append(country).append('_').append(variant);
-            } else if (!country.isEmpty()) {
-                sb.append(language).append('_').append(country);
-            } else {
-                sb.append(language);
-            }
-        }
-        return sb.toString();
-
     }
 }
