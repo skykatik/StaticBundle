@@ -173,7 +173,7 @@ public class AnnotationProcessor extends AbstractProcessor {
         }
     }
 
-    static void generatePluralPropertyMethod(List<LocaleSettings> locales, CharSink sink, PluralProperty p) throws IOException {
+    void generatePluralPropertyMethod(List<LocaleSettings> locales, CharSink sink, PluralProperty p) throws IOException {
         sink.append("long amount").append(')');
         sink.begin();
 
@@ -222,7 +222,7 @@ public class AnnotationProcessor extends AbstractProcessor {
         sink.end();
     }
 
-    static void generateOrdinalPropertyMethod(List<LocaleSettings> locales, CharSink sink, OrdinalProperty p) throws IOException {
+    void generateOrdinalPropertyMethod(List<LocaleSettings> locales, CharSink sink, OrdinalProperty p) throws IOException {
 
         var referenceMessage = p.messages[REFERENCE_LOCALE_TAG];
         Arg[] sortedArgs = new Arg[referenceMessage.args.length];
@@ -267,7 +267,7 @@ public class AnnotationProcessor extends AbstractProcessor {
             sink.ln();
         }
 
-
+        sink.append("default -> throw new IllegalStateException();");
         sink.endsc();
 
         sink.end();
