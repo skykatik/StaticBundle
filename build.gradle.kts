@@ -3,7 +3,7 @@ plugins {
 }
 
 version = "0.1.0-SNAPSHOT"
-group = "com.github.skykatik"
+group = "io.github.skykatik"
 
 subprojects {
 

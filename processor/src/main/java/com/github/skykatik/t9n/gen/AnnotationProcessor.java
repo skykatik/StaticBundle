@@ -32,7 +32,7 @@ public class AnnotationProcessor extends AbstractProcessor {
 
                 if (ann.settings().length == 0) {
                     processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                            "settings() attribute must contains at least one setting", p);
+                            "@MessagesSource.settings() attribute must contains at least one setting", p);
                     return true;
                 }
 
