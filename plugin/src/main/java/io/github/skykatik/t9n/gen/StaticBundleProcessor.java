@@ -1,9 +1,11 @@
 package io.github.skykatik.t9n.gen;
 
 import io.github.skykatik.staticbundle.plugin.DefaultSourceSetSettings;
+import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
 import org.gradle.api.file.FileCollection;
 
+import javax.lang.model.SourceVersion;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -19,6 +21,7 @@ public class StaticBundleProcessor {
     static final String indent = " ".repeat(4);
     static final int lineWrap = 120;
 
+    final Project project;
     final Path resultPath;
     final String packageName;
     final String className;
@@ -26,8 +29,10 @@ public class StaticBundleProcessor {
     final FileCollection resources;
     final ProcessingResources procResources;
 
-    public StaticBundleProcessor(Directory codegenDir, FileCollection resources, DefaultSourceSetSettings sett) {
+    public StaticBundleProcessor(Project project, Directory codegenDir,
+                                 FileCollection resources, DefaultSourceSetSettings sett) {
 
+        this.project = project;
         this.resources = resources;
 
         resourceFilenameFormat = sett.getResourceFilenameFormat().get();
@@ -60,11 +65,13 @@ public class StaticBundleProcessor {
                 sink.ln(2);
             }
 
-            sink.append("import java.util.Locale;").ln();
-            sink.append("import java.util.Objects;").ln();
-            sink.append("import io.github.skykatik.staticbundle.MessageSource;").ln();
-            sink.append("import io.github.skykatik.staticbundle.LocaleTag;").ln();
-            sink.ln();
+            sink.append("""
+                    import java.util.Locale;
+                    import java.util.Objects;
+                    import io.github.skykatik.staticbundle.MessageSource;
+                    import io.github.skykatik.staticbundle.LocaleTag;
+                    
+                    """);
 
             sink.append("public final class ").append(className).append(" extends MessageSource");
             sink.begin();
@@ -89,9 +96,11 @@ public class StaticBundleProcessor {
 
             var properties = new TreeMap<String, Property>();
 
+            // region validation
+
             var referenceSettings = procResources.locales.get(REFERENCE_LOCALE_TAG);
-            var referenceBundle = loadProperties(referenceSettings.locale);
-            for (var e : referenceBundle.entrySet()) {
+            var referenceBundle = loadBundle(referenceSettings.locale);
+            for (var e : referenceBundle.properties.entrySet()) {
                 String key = e.getKey();
                 String text = e.getValue();
 
@@ -105,10 +114,12 @@ public class StaticBundleProcessor {
                 });
             }
 
+            checkForMissingPluralForms(properties, referenceSettings, referenceBundle);
+
             for (int i = 1; i < procResources.locales.size(); i++) {
                 var settings = procResources.locales.get(i);
-                var bundle = loadProperties(settings.locale);
-                for (var e : bundle.entrySet()) {
+                var bundle = loadBundle(settings.locale);
+                for (var e : bundle.properties.entrySet()) {
                     String k = e.getKey();
                     String v = e.getValue();
 
@@ -116,12 +127,17 @@ public class StaticBundleProcessor {
 
                     var property = properties.get(parts.baseKey());
                     if (property == null) {
-                        throw new IllegalStateException(parts.baseKey());
+                        throw new IllegalStateException("Extraneous property '" + k + "' in bundle: " +
+                                project.relativePath(bundle.resourcePath));
                     }
 
                     property.merge(settings, k, v);
                 }
+
+                checkForMissingPluralForms(properties, settings, bundle);
             }
+
+            // endregion
 
             for (var msg : properties.values()) {
                 sink.ln();
@@ -139,6 +155,29 @@ public class StaticBundleProcessor {
             generateLocaleTagConstants(sink);
 
             sink.end();
+        }
+    }
+
+    void checkForMissingPluralForms(Map<String, Property> properties, LocaleSettings settings, Bundle bundle) {
+        for (Property value : properties.values()) {
+            if (value instanceof PluralProperty p) {
+                var pluralForms = p.messages[settings.localeTagValue];
+                for (int n = 0; n < pluralForms.length; n++) {
+                    var pluralForm = pluralForms[n];
+                    if (pluralForm == null) {
+                        String key = PropertyKeyNaming.instance().format(p.key, n);
+                        throw new IllegalStateException("Missing plural property '" + key + "' in bundle: " +
+                                project.relativePath(bundle.resourcePath));
+                    }
+                }
+            } else if (value instanceof OrdinalProperty p) {
+                if (p.messages[settings.localeTagValue] == null) {
+                    throw new IllegalStateException("Missing property '" + p.key + "' in bundle: " +
+                            project.relativePath(bundle.resourcePath));
+                }
+            } else {
+                throw new IllegalStateException();
+            }
         }
     }
 
@@ -308,7 +347,7 @@ public class StaticBundleProcessor {
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    Map<String, String> loadProperties(Locale locale) throws IOException {
+    Bundle loadBundle(Locale locale) throws IOException {
         String localeTag = locale.equals(Locale.ROOT) ? "" : "_" + locale;
 
         String fileName = resourceFilenameFormat.replace("{locale}", localeTag);
@@ -328,9 +367,13 @@ public class StaticBundleProcessor {
             var props = new Properties();
             props.load(reader);
             var map = new HashMap(props);
-            return (Map<String, String>) map;
+            var properties0 = (Map<String, String>) map;
+
+            return new Bundle(resourcePath, properties0);
         }
     }
+
+    record Bundle(Path resourcePath, Map<String, String> properties) {}
 
     static String localeToString(Locale locale) {
         if (locale.equals(Locale.ROOT)) {
@@ -394,7 +437,13 @@ public class StaticBundleProcessor {
                 result[d++] = c;
             }
         }
-        return new String(result, 0, d);
+
+        String methodName = new String(result, 0, d);
+        if (!SourceVersion.isIdentifier(methodName) || SourceVersion.isKeyword(methodName)) {
+            throw new IllegalStateException("Incorrect property name '" + key + "' which translates into invalid method name");
+        }
+
+        return methodName;
     }
 
     static String escape(char c) {
@@ -567,7 +616,7 @@ public class StaticBundleProcessor {
             if (parts.pluralForm() != -1) {
 
                 if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
-                    throw new IllegalArgumentException("Incorrect plural form for key '" + key +
+                    throw new IllegalStateException("Incorrect plural form for key '" + key +
                             "': " + parts.pluralForm() + ", plural forms count: " + settings.pluralFormsCount +
                             " in locale " + settings.locale);
                 }
@@ -581,8 +630,7 @@ public class StaticBundleProcessor {
                 }
                 locale[parts.pluralForm()] = msg;
 
-                String baseKey = parts.baseKey();
-                return new PluralProperty(baseKey, translateKeyToMethodName(baseKey), messages);
+                return new PluralProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), messages);
             }
 
             var msg = Message.parse(settings, text);

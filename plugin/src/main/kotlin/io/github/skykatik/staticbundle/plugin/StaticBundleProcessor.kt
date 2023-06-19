@@ -32,7 +32,7 @@ abstract class StaticBundleProcessor @Inject constructor(
     @TaskAction
     fun run() {
         val codegenDir = codegenDir.get()
-        val gen = StaticBundleProcessor(codegenDir, resourceDir, sett)
+        val gen = StaticBundleProcessor(project, codegenDir, resourceDir, sett)
         gen.generate()
     }
 }
