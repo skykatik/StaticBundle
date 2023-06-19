@@ -1,13 +1,9 @@
-plugins {
-    `java-library`
-}
-
 version = "0.1.0-SNAPSHOT"
 group = "io.github.skykatik"
 
 subprojects {
 
-    apply(plugin = "java-library")
+    apply<JavaPlugin>()
 
     tasks.withType<JavaCompile> {
         options.javaModuleVersion.set(rootProject.version.toString())

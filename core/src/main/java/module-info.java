@@ -1,3 +1,3 @@
 module staticbundle.core {
-    exports com.github.skykatik.t9n;
+    exports io.github.skykatik.staticbundle;
 }
