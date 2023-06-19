@@ -33,6 +33,7 @@ abstract class StaticBundleProcessor @Inject constructor(
     fun run() {
         val codegenDir = codegenDir.get()
         val gen = StaticBundleProcessor(project, codegenDir, resourceDir, sett)
+        gen.validate()
         gen.generate()
     }
 }

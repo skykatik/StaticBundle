@@ -28,6 +28,7 @@ public class StaticBundleProcessor {
     final String resourceFilenameFormat;
     final FileCollection resources;
     final ProcessingResources procResources;
+    final TreeMap<String, Property> properties = new TreeMap<>();
 
     public StaticBundleProcessor(Project project, Directory codegenDir,
                                  FileCollection resources, DefaultSourceSetSettings sett) {
@@ -54,6 +55,49 @@ public class StaticBundleProcessor {
         }
 
         procResources = new ProcessingResources(locales);
+    }
+
+    public void validate() throws IOException {
+
+        var referenceSettings = procResources.locales.get(REFERENCE_LOCALE_TAG);
+        var referenceBundle = loadBundle(referenceSettings.locale);
+        referenceSettings.relativeResourcePath = project.relativePath(referenceBundle.resourcePath);
+        for (var e : referenceBundle.properties.entrySet()) {
+            String key = e.getKey();
+            String text = e.getValue();
+
+            var p = parseProperty(referenceSettings, key, text, referenceBundle);
+            properties.compute(p.key(), (k, v) -> {
+                if (v == null) {
+                    return p;
+                }
+                v.merge(referenceSettings, key, text);
+                return v;
+            });
+        }
+
+        checkForMissingPluralForms(referenceSettings, referenceBundle);
+
+        for (int i = 1; i < procResources.locales.size(); i++) {
+            var settings = procResources.locales.get(i);
+            var bundle = loadBundle(settings.locale);
+            settings.relativeResourcePath = project.relativePath(bundle.resourcePath);
+
+            for (var e : bundle.properties.entrySet()) {
+                String k = e.getKey();
+                String v = e.getValue();
+
+                var parts = PropertyKeyNaming.instance().parse(k);
+                var property = properties.get(parts.baseKey());
+                if (property == null) {
+                    throw new IllegalStateException("Extraneous property '" + k + "' in bundle: " + settings.relativeResourcePath);
+                }
+
+                property.merge(settings, k, v);
+            }
+
+            checkForMissingPluralForms(settings, bundle);
+        }
     }
 
     public void generate() throws IOException {
@@ -94,51 +138,6 @@ public class StaticBundleProcessor {
             generateWithLocaleTagMethod(sink);
             generatePluralFormMethod(sink);
 
-            var properties = new TreeMap<String, Property>();
-
-            // region validation
-
-            var referenceSettings = procResources.locales.get(REFERENCE_LOCALE_TAG);
-            var referenceBundle = loadBundle(referenceSettings.locale);
-            for (var e : referenceBundle.properties.entrySet()) {
-                String key = e.getKey();
-                String text = e.getValue();
-
-                var p = Property.parse(procResources, referenceSettings, key, text);
-                properties.compute(p.key(), (k, v) -> {
-                    if (v == null) {
-                        return p;
-                    }
-                    v.merge(referenceSettings, key, text);
-                    return v;
-                });
-            }
-
-            checkForMissingPluralForms(properties, referenceSettings, referenceBundle);
-
-            for (int i = 1; i < procResources.locales.size(); i++) {
-                var settings = procResources.locales.get(i);
-                var bundle = loadBundle(settings.locale);
-                for (var e : bundle.properties.entrySet()) {
-                    String k = e.getKey();
-                    String v = e.getValue();
-
-                    var parts = PropertyKeyNaming.instance().parse(k);
-
-                    var property = properties.get(parts.baseKey());
-                    if (property == null) {
-                        throw new IllegalStateException("Extraneous property '" + k + "' in bundle: " +
-                                project.relativePath(bundle.resourcePath));
-                    }
-
-                    property.merge(settings, k, v);
-                }
-
-                checkForMissingPluralForms(properties, settings, bundle);
-            }
-
-            // endregion
-
             for (var msg : properties.values()) {
                 sink.ln();
                 sink.append("public String ").append(msg.methodName()).append('(');
@@ -158,7 +157,7 @@ public class StaticBundleProcessor {
         }
     }
 
-    void checkForMissingPluralForms(Map<String, Property> properties, LocaleSettings settings, Bundle bundle) {
+    void checkForMissingPluralForms(LocaleSettings settings, Bundle bundle) {
         for (Property value : properties.values()) {
             if (value instanceof PluralProperty p) {
                 var pluralForms = p.messages[settings.localeTagValue];
@@ -290,7 +289,7 @@ public class StaticBundleProcessor {
 
             sink.append(settings.localeTag);
             sink.append('(');
-            sink.append(localeToString(settings.locale));
+            sink.append(constructLocale(settings.locale));
             sink.append(')');
 
             if (i != procResources.locales.size() - 1) {
@@ -346,7 +345,6 @@ public class StaticBundleProcessor {
         sink.end();
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
     Bundle loadBundle(Locale locale) throws IOException {
         String localeTag = locale.equals(Locale.ROOT) ? "" : "_" + locale;
 
@@ -364,18 +362,15 @@ public class StaticBundleProcessor {
         }
 
         try (var reader = Files.newBufferedReader(resourcePath)) {
-            var props = new Properties();
-            props.load(reader);
-            var map = new HashMap(props);
-            var properties0 = (Map<String, String>) map;
-
-            return new Bundle(resourcePath, properties0);
+            var props = PropertiesReader.load(reader);
+            return new Bundle(resourcePath, props);
         }
     }
 
-    record Bundle(Path resourcePath, Map<String, String> properties) {}
+    record Bundle(Path resourcePath, Map<String, String> properties) {
+    }
 
-    static String localeToString(Locale locale) {
+    static String constructLocale(Locale locale) {
         if (locale.equals(Locale.ROOT)) {
             return "Locale.ROOT";
         } else if (locale.equals(Locale.ENGLISH)) {
@@ -482,8 +477,23 @@ public class StaticBundleProcessor {
         return locale.toString().toUpperCase(Locale.ROOT);
     }
 
-    record LocaleSettings(Locale locale, String localeTag, int localeTagValue,
-                          int pluralFormsCount, String pluralFormFunction) {
+    static final class LocaleSettings {
+        final Locale locale;
+        final String localeTag;
+        final int localeTagValue;
+        final int pluralFormsCount;
+        final String pluralFormFunction;
+
+        String relativeResourcePath;
+
+        LocaleSettings(Locale locale, String localeTag, int localeTagValue,
+                       int pluralFormsCount, String pluralFormFunction) {
+            this.locale = locale;
+            this.localeTag = localeTag;
+            this.localeTagValue = localeTagValue;
+            this.pluralFormsCount = pluralFormsCount;
+            this.pluralFormFunction = pluralFormFunction;
+        }
 
         LocaleSettings(io.github.skykatik.staticbundle.plugin.LocaleSettings internal, int localeTagValue) {
             this(internal.getLocale().get(), localeTagValue, internal.getPluralForms().get(),
@@ -492,6 +502,18 @@ public class StaticBundleProcessor {
 
         LocaleSettings(Locale locale, int localeTagValue, int pluralFormsCount, String pluralFormFunction) {
             this(locale, translateLocaleToLocaleTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
+        }
+
+        @Override
+        public String toString() {
+            return "LocaleSettings{" +
+                    "locale=" + locale +
+                    ", localeTag='" + localeTag + '\'' +
+                    ", localeTagValue=" + localeTagValue +
+                    ", pluralFormsCount=" + pluralFormsCount +
+                    ", pluralFormFunction='" + pluralFormFunction + '\'' +
+                    ", relativeResourcePath='" + relativeResourcePath + '\'' +
+                    '}';
         }
     }
 
@@ -568,7 +590,8 @@ public class StaticBundleProcessor {
         }
     }
 
-    record Arg(int pos, String type, String name) {}
+    record Arg(int pos, String type, String name) {
+    }
 
     record OrdinalProperty(String key, String methodName, Message[/*localeTag*/] messages) implements Property {
         @Override
@@ -592,8 +615,13 @@ public class StaticBundleProcessor {
         public void merge(LocaleSettings settings, String key, String text) {
             var parts = PropertyKeyNaming.instance().parse(key);
             if (parts.pluralForm() == -1) {
-                throw new IllegalArgumentException("Ordinal property with plural: '" +
-                        key + "' in locale: " + settings.locale);
+                throw new IllegalStateException("Ordinal property aliases with plural key: '" +
+                        key + "' in bundle: " + settings.relativeResourcePath);
+            }
+            if (parts.pluralForm() >= settings.pluralFormsCount) {
+                throw new IllegalStateException("Invalid plural property '" + key +
+                        "', plural form is out of range [0, " + settings.pluralFormsCount +
+                        ") in bundle: " + settings.relativeResourcePath);
             }
 
             var msg = Message.parse(settings, text);
@@ -606,39 +634,38 @@ public class StaticBundleProcessor {
         }
     }
 
-    sealed interface Property {
-
-        static Property parse(ProcessingResources processingResources,
-                              LocaleSettings settings, String key, String text) {
+    Property parseProperty(LocaleSettings settings, String key, String text, Bundle bundle) {
 
 
-            var parts = PropertyKeyNaming.instance().parse(key);
-            if (parts.pluralForm() != -1) {
+        var parts = PropertyKeyNaming.instance().parse(key);
+        if (parts.pluralForm() != -1) {
 
-                if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
-                    throw new IllegalStateException("Incorrect plural form for key '" + key +
-                            "': " + parts.pluralForm() + ", plural forms count: " + settings.pluralFormsCount +
-                            " in locale " + settings.locale);
-                }
-
-                var msg = Message.parse(settings, text);
-                var messages = new Message[processingResources.locales.size()][];
-
-                var locale = messages[settings.localeTagValue];
-                if (locale == null) {
-                    messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
-                }
-                locale[parts.pluralForm()] = msg;
-
-                return new PluralProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), messages);
+            if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
+                throw new IllegalStateException("Invalid plural property '" + key +
+                        "', plural form is out of range [0, " + settings.pluralFormsCount +
+                        ") in bundle: " + project.relativePath(bundle.resourcePath));
             }
 
             var msg = Message.parse(settings, text);
-            var tokens = new Message[processingResources.locales.size()];
-            tokens[settings.localeTagValue] = msg;
+            var messages = new Message[procResources.locales.size()][];
 
-            return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), tokens);
+            var locale = messages[settings.localeTagValue];
+            if (locale == null) {
+                messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
+            }
+            locale[parts.pluralForm()] = msg;
+
+            return new PluralProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), messages);
         }
+
+        var msg = Message.parse(settings, text);
+        var tokens = new Message[procResources.locales.size()];
+        tokens[settings.localeTagValue] = msg;
+
+        return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), tokens);
+    }
+
+    sealed interface Property {
 
         String key();
 
