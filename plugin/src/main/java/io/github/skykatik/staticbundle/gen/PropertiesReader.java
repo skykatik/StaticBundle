@@ -6,11 +6,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 class PropertiesReader {
-    public static Map<String, String> load(Reader reader) throws IOException {
-        return load0(new LineReader(reader));
+    public static Map<String, String> load(String path, Reader reader) throws IOException {
+        return load0(path, new LineReader(reader));
     }
 
-    private static Map<String, String> load0(LineReader lr) throws IOException {
+    static Map<String, String> load0(String path, LineReader lr) throws IOException {
         StringBuilder outBuffer = new StringBuilder();
         int limit;
         int keyLen;
@@ -24,11 +24,9 @@ class PropertiesReader {
             valueStart = limit;
             hasSep = false;
 
-            //System.out.println("line=<" + new String(lineBuf, 0, limit) + ">");
             precedingBackslash = false;
             while (keyLen < limit) {
                 char c = lr.lineBuf[keyLen];
-                //need check if escaped.
                 if ((c == '=' ||  c == ':') && !precedingBackslash) {
                     valueStart = keyLen + 1;
                     hasSep = true;
@@ -57,7 +55,10 @@ class PropertiesReader {
             }
             String key = loadConvert(lr.lineBuf, 0, keyLen, outBuffer);
             String value = loadConvert(lr.lineBuf, valueStart, limit - valueStart, outBuffer);
-            map.put(key, value);
+            String old = map.putIfAbsent(key, value);
+            if (old != null) {
+                throw new IllegalStateException("[Bundle: '" + path + "', property: '" + key + "'] Duplicate found");
+            }
         }
 
         return map;
@@ -69,17 +70,18 @@ class PropertiesReader {
      * Method returns the char length of the "logical line" and stores
      * the line in "lineBuf".
      */
-    private static class LineReader {
+    static class LineReader {
         LineReader(Reader reader) {
             this.reader = reader;
             inCharBuf = new char[8192];
         }
 
+        final char[] inCharBuf;
+        final Reader reader;
+
         char[] lineBuf = new char[1024];
-        private char[] inCharBuf;
-        private int inLimit = 0;
-        private int inOff = 0;
-        private Reader reader;
+        int inLimit = 0;
+        int inOff = 0;
 
         int readLine() throws IOException {
             // use locals to optimize for interpreted performance
@@ -186,7 +188,7 @@ class PropertiesReader {
         }
     }
 
-    private static int newLength(int oldLength, int minGrowth, int prefGrowth) {
+    static int newLength(int oldLength, int minGrowth, int prefGrowth) {
         // preconditions not checked because of inlining
         // assert oldLength >= 0
         // assert minGrowth > 0
@@ -200,7 +202,7 @@ class PropertiesReader {
         }
     }
 
-    private static int hugeLength(int oldLength, int minGrowth) {
+    static int hugeLength(int oldLength, int minGrowth) {
         int minLength = oldLength + minGrowth;
         if (minLength < 0) { // overflow
             throw new OutOfMemoryError("Required array length " + oldLength + " + " + minGrowth + " is too large");
@@ -215,7 +217,7 @@ class PropertiesReader {
      * Converts encoded &#92;uxxxx to unicode chars
      * and changes special saved chars to their original forms
      */
-    private static String loadConvert(char[] in, int off, int len, StringBuilder out) {
+    static String loadConvert(char[] in, int off, int len, StringBuilder out) {
         char aChar;
         int end = off + len;
         int start = off;

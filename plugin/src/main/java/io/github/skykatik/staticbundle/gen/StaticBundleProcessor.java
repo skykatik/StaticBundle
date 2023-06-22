@@ -76,7 +76,7 @@ public class StaticBundleProcessor {
         for (int i = 1; i < procResources.locales.size(); i++) {
             var settings = procResources.locales.get(i);
             var bundle = loadBundle(settings.locale);
-            settings.relativeResourcePath = project.relativePath(bundle.resourcePath);
+            settings.relativeResourcePath = bundle.resourcePath;
 
             for (var e : bundle.properties.entrySet()) {
                 String k = e.getKey();
@@ -386,13 +386,14 @@ public class StaticBundleProcessor {
             throw new FileNotFoundException(fileName);
         }
 
+        String relative = project.relativePath(resourcePath);
         try (var reader = Files.newBufferedReader(resourcePath)) {
-            var props = PropertiesReader.load(reader);
-            return new Bundle(resourcePath, props);
+            var props = PropertiesReader.load(relative, reader);
+            return new Bundle(relative, props);
         }
     }
 
-    record Bundle(Path resourcePath, Map<String, String> properties) {
+    record Bundle(String resourcePath, Map<String, String> properties) {
     }
 
     static String constructLocale(Locale locale) {
