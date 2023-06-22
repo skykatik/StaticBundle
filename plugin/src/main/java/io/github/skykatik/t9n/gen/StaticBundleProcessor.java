@@ -187,13 +187,22 @@ public class StaticBundleProcessor {
         sink.append("int index = pluralForm(amount);");
         sink.ln();
 
-        sink.append("return switch (localeTag)");
-        sink.begin();
+        if (procResources.isSingle()) {
+            sink.append("return ");
+        } else {
+            sink.append("return switch (localeTag)");
+            sink.begin();
+        }
+
 
         for (int localeTag = 0; localeTag < procResources.locales.size(); localeTag++) {
             var localeSettings = procResources.locales.get(localeTag);
 
-            sink.append("case ").append(localeSettings.localeTag).append(" -> switch (index)");
+            if (!procResources.isSingle()) {
+                sink.append("case ").append(localeSettings.localeTag).append(" -> ");
+            }
+
+            sink.append("switch (index)");
             sink.begin();
 
             var pluralForms = p.messages[localeTag];
@@ -224,7 +233,9 @@ public class StaticBundleProcessor {
             sink.endsc();
         }
 
-        sink.endsc();
+        if (!procResources.isSingle()) {
+            sink.endsc();
+        }
 
         sink.end();
     }
@@ -247,12 +258,19 @@ public class StaticBundleProcessor {
         sink.append(')');
         sink.begin();
 
-        sink.append("return switch (localeTag)");
-        sink.begin();
+        if (procResources.isSingle()) {
+            sink.append("return ");
+        } else {
+            sink.append("return switch (localeTag)");
+            sink.begin();
+        }
+
         for (int localeTag = 0; localeTag < procResources.locales.size(); localeTag++) {
             var localeSettings = procResources.locales.get(localeTag);
 
-            sink.append("case ").append(localeSettings.localeTag).append(" -> ");
+            if (!procResources.isSingle()) {
+                sink.append("case ").append(localeSettings.localeTag).append(" -> ");
+            }
 
             var message = p.messages[localeTag];
             for (int i = 0, k = 0; i < message.tokens.length; i++) {
@@ -274,7 +292,10 @@ public class StaticBundleProcessor {
             sink.ln();
         }
 
-        sink.endsc();
+        if (!procResources.isSingle()) {
+            sink.endsc();
+        }
+
 
         sink.end();
     }
@@ -323,14 +344,27 @@ public class StaticBundleProcessor {
 
         sink.append("public int pluralForm(long value)");
         sink.begin();
-        sink.append("return switch (localeTag)");
-        sink.begin();
+
+        if (procResources.isSingle()) {
+            sink.append("return ");
+        } else {
+            sink.append("return switch (localeTag)");
+            sink.begin();
+        }
+
         for (var settings : procResources.locales) {
-            sink.append("case ").append(settings.localeTag).append(" -> ").append(settings.pluralFormFunction).append(';');
+            if (!procResources.isSingle()) {
+                sink.append("case ").append(settings.localeTag).append(" -> ");
+            }
+
+            sink.append(settings.pluralFormFunction).append(';');
             sink.ln();
         }
 
-        sink.endsc();
+        if (!procResources.isSingle()) {
+            sink.endsc();
+        }
+
         sink.end();
     }
 
@@ -339,9 +373,15 @@ public class StaticBundleProcessor {
 
         sink.append("public ").append(className).append(" withLocaleTag(LocaleTag localeTag)");
         sink.begin();
-        sink.append("if (this.localeTag == localeTag) return this;");
-        sink.ln();
-        sink.append("return new ").append(className).append("(localeTag);");
+
+        if (procResources.isSingle()) {
+            sink.append("return this;");
+        } else {
+            sink.append("if (this.localeTag == localeTag) return this;");
+            sink.ln();
+            sink.append("return new ").append(className).append("(localeTag);");
+        }
+
         sink.end();
     }
 
@@ -519,6 +559,9 @@ public class StaticBundleProcessor {
 
     record ProcessingResources(List<LocaleSettings> locales) {
 
+        boolean isSingle() {
+            return locales.size() == 1;
+        }
     }
 
     record Message(Arg[] args, String[] tokens) {
