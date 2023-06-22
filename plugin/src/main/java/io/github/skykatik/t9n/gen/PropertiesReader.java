@@ -5,7 +5,7 @@ import java.io.Reader;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class PropertiesReader {
+class PropertiesReader {
     public static Map<String, String> load(Reader reader) throws IOException {
         return load0(new LineReader(reader));
     }

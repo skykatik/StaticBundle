@@ -76,7 +76,7 @@ public class StaticBundleProcessor {
             });
         }
 
-        checkForMissingPluralForms(referenceSettings, referenceBundle);
+        checkForMissingPluralForms(referenceSettings);
 
         for (int i = 1; i < procResources.locales.size(); i++) {
             var settings = procResources.locales.get(i);
@@ -96,7 +96,7 @@ public class StaticBundleProcessor {
                 property.merge(settings, k, v);
             }
 
-            checkForMissingPluralForms(settings, bundle);
+            checkForMissingPluralForms(settings);
         }
     }
 
@@ -157,7 +157,7 @@ public class StaticBundleProcessor {
         }
     }
 
-    void checkForMissingPluralForms(LocaleSettings settings, Bundle bundle) {
+    void checkForMissingPluralForms(LocaleSettings settings) {
         for (Property value : properties.values()) {
             if (value instanceof PluralProperty p) {
                 var pluralForms = p.messages[settings.localeTagValue];
@@ -209,20 +209,8 @@ public class StaticBundleProcessor {
                 var message = pluralForms[pluralForm];
 
                 sink.append("case ").append(Integer.toString(pluralForm)).append(" -> ");
-                for (int i = 0, k = 0; i < message.tokens.length; i++) {
-                    sink.append(message.tokens[i]);
+                printMessage(sink, message);
 
-                    if (k < message.args.length) {
-                        Arg arg = message.args[k++];
-
-                        sink.append(" + ");
-                        sink.append(arg.name);
-                    }
-
-                    if (i != message.tokens.length - 1) {
-                        sink.append(" + ");
-                    }
-                }
                 sink.append(';');
                 sink.ln();
             }
@@ -271,20 +259,7 @@ public class StaticBundleProcessor {
             }
 
             var message = p.messages[localeTag];
-            for (int i = 0, k = 0; i < message.tokens.length; i++) {
-                sink.append(message.tokens[i]);
-
-                if (k < message.args.length) {
-                    Arg arg = message.args[k++];
-
-                    sink.append(" + ");
-                    sink.append(arg.name);
-                }
-
-                if (i != message.tokens.length - 1) {
-                    sink.append(" + ");
-                }
-            }
+            printMessage(sink, message);
 
             sink.append(';');
             sink.ln();
@@ -296,6 +271,23 @@ public class StaticBundleProcessor {
 
 
         sink.end();
+    }
+
+    void printMessage(CharSink sink, Message message) throws IOException {
+        for (int i = 0, k = 0; i < message.tokens.length; i++) {
+            sink.append(message.tokens[i]);
+
+            if (k < message.args.length) {
+                Arg arg = message.args[k++];
+
+                sink.append(" + ");
+                sink.append(arg.name);
+            }
+
+            if (i != message.tokens.length - 1) {
+                sink.append(" + ");
+            }
+        }
     }
 
     void generateLocaleTagConstants(CharSink sink) throws IOException {

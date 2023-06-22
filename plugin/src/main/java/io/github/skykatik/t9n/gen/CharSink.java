@@ -4,7 +4,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.Writer;
 
-public class CharSink implements Closeable {
+class CharSink implements Closeable {
 
     public static final String DEFAULT_INDENT = "     ";
     public static final int DEFAULT_LINE_WRAP = 120;
