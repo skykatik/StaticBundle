@@ -66,7 +66,7 @@ public class StaticBundleProcessor {
             String key = e.getKey();
             String text = e.getValue();
 
-            var p = parseProperty(referenceSettings, key, text, referenceBundle);
+            var p = parseProperty(referenceSettings, key, text);
             properties.compute(p.key(), (k, v) -> {
                 if (v == null) {
                     return p;
@@ -90,7 +90,7 @@ public class StaticBundleProcessor {
                 var parts = PropertyKeyNaming.instance().parse(k);
                 var property = properties.get(parts.baseKey());
                 if (property == null) {
-                    throw new IllegalStateException("Extraneous property '" + k + "' in bundle: " + settings.relativeResourcePath);
+                    throw settings.problem(k, "Extraneous property");
                 }
 
                 property.merge(settings, k, v);
@@ -165,14 +165,12 @@ public class StaticBundleProcessor {
                     var pluralForm = pluralForms[n];
                     if (pluralForm == null) {
                         String key = PropertyKeyNaming.instance().format(p.key, n);
-                        throw new IllegalStateException("Missing plural property '" + key + "' in bundle: " +
-                                project.relativePath(bundle.resourcePath));
+                        throw settings.problem(key, "Missing plural property");
                     }
                 }
             } else if (value instanceof OrdinalProperty p) {
                 if (p.messages[settings.localeTagValue] == null) {
-                    throw new IllegalStateException("Missing property '" + p.key + "' in bundle: " +
-                            project.relativePath(bundle.resourcePath));
+                    throw settings.problem(p.key, "Missing property");
                 }
             } else {
                 throw new IllegalStateException();
@@ -456,7 +454,7 @@ public class StaticBundleProcessor {
         return "new Locale(" + s + ')';
     }
 
-    static String translateKeyToMethodName(String key) {
+    static String translateKeyToMethodName(LocaleSettings settings, String key) {
         char[] result = new char[key.length()];
         int d = 0;
         boolean prevIsDot = false;
@@ -475,7 +473,7 @@ public class StaticBundleProcessor {
 
         String methodName = new String(result, 0, d);
         if (!SourceVersion.isIdentifier(methodName) || SourceVersion.isKeyword(methodName)) {
-            throw new IllegalStateException("Incorrect property name '" + key + "' which translates into invalid method name");
+            throw settings.problem(key, "Illegal name which translates into incorrect Java identifier");
         }
 
         return methodName;
@@ -544,6 +542,10 @@ public class StaticBundleProcessor {
             this(locale, translateLocaleToLocaleTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
         }
 
+        IllegalStateException problem(String key, String text) {
+            return new IllegalStateException("[Bundle: '" + relativeResourcePath + "', property: '" + key + "'] " + text);
+        }
+
         @Override
         public String toString() {
             return "LocaleSettings{" +
@@ -566,7 +568,7 @@ public class StaticBundleProcessor {
 
     record Message(Arg[] args, String[] tokens) {
 
-        static Message parse(LocaleSettings settings, String text) {
+        static Message parse(LocaleSettings settings, String key, String text) {
             var tokens = new ArrayList<String>();
             var args = new ArrayList<Arg>();
             var matcher = ARGS.matcher(text);
@@ -586,17 +588,17 @@ public class StaticBundleProcessor {
                 int pos;
                 if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
                     if (posStr == null) {
-                        throw new IllegalArgumentException("Argument '" + name + "' in reference locale must be indexed");
+                        throw settings.problem(key, "Non-indexed argument: '" + name + "'");
                     }
 
                     pos = Integer.parseInt(posStr.substring(0, posStr.length() - 1));
 
                     if (pos < 0) {
-                        throw new IllegalArgumentException("Negative position for arg: '" + name + "' in reference locale");
+                        throw settings.problem(key, "Argument with negative index: '" + name + "'");
                     }
                 } else {
                     if (posStr != null) {
-                        throw new IllegalArgumentException("Mixed argument '" + name + "'");
+                        throw settings.problem(key, "Mixed argument position: '" + name + "'");
                     }
 
                     pos = argPos++;
@@ -639,7 +641,7 @@ public class StaticBundleProcessor {
     record OrdinalProperty(String key, String methodName, Message[/*localeTag*/] messages) implements Property {
         @Override
         public void merge(LocaleSettings settings, String key, String text) {
-            messages[settings.localeTagValue] = Message.parse(settings, text);
+            messages[settings.localeTagValue] = Message.parse(settings, key, text);
         }
 
         @Override
@@ -658,16 +660,14 @@ public class StaticBundleProcessor {
         public void merge(LocaleSettings settings, String key, String text) {
             var parts = PropertyKeyNaming.instance().parse(key);
             if (parts.pluralForm() == -1) {
-                throw new IllegalStateException("Ordinal property aliases with plural key: '" +
-                        key + "' in bundle: " + settings.relativeResourcePath);
-            }
-            if (parts.pluralForm() >= settings.pluralFormsCount) {
-                throw new IllegalStateException("Invalid plural property '" + key +
-                        "', plural form is out of range [0, " + settings.pluralFormsCount +
-                        ") in bundle: " + settings.relativeResourcePath);
+                throw settings.problem(key, "Aliases with plural property");
             }
 
-            var msg = Message.parse(settings, text);
+            if (parts.pluralForm() >= settings.pluralFormsCount) {
+                throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
+            }
+
+            var msg = Message.parse(settings, key, text);
             var locale = messages[settings.localeTagValue];
             if (locale == null) {
                 messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
@@ -677,19 +677,15 @@ public class StaticBundleProcessor {
         }
     }
 
-    Property parseProperty(LocaleSettings settings, String key, String text, Bundle bundle) {
-
-
+    Property parseProperty(LocaleSettings settings, String key, String text) {
         var parts = PropertyKeyNaming.instance().parse(key);
         if (parts.pluralForm() != -1) {
 
             if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
-                throw new IllegalStateException("Invalid plural property '" + key +
-                        "', plural form is out of range [0, " + settings.pluralFormsCount +
-                        ") in bundle: " + project.relativePath(bundle.resourcePath));
+                throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
             }
 
-            var msg = Message.parse(settings, text);
+            var msg = Message.parse(settings, key, text);
             var messages = new Message[procResources.locales.size()][];
 
             var locale = messages[settings.localeTagValue];
@@ -698,14 +694,14 @@ public class StaticBundleProcessor {
             }
             locale[parts.pluralForm()] = msg;
 
-            return new PluralProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), messages);
+            return new PluralProperty(parts.baseKey(), translateKeyToMethodName(settings, parts.baseKey()), messages);
         }
 
-        var msg = Message.parse(settings, text);
+        var msg = Message.parse(settings, key, text);
         var tokens = new Message[procResources.locales.size()];
         tokens[settings.localeTagValue] = msg;
 
-        return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(parts.baseKey()), tokens);
+        return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(settings, parts.baseKey()), tokens);
     }
 
     sealed interface Property {
