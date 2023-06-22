@@ -5,10 +5,13 @@ plugins {
     `maven-publish`
 }
 
+version = "0.1.0-SNAPSHOT"
+group = "io.github.skykatik.staticbundle"
+
 gradlePlugin {
 
     plugins {
-        register("codegen-plugin") {
+        register("codegen") {
             id = "io.github.skykatik.staticbundle"
             displayName = "Static Bundle Generator"
             description = "A gradle plugin for generating java classes from .proprerties files."
@@ -35,4 +38,9 @@ tasks.withType<KotlinCompile> {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
 }

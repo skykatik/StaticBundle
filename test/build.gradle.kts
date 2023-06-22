@@ -4,10 +4,8 @@ plugins {
     id("io.github.skykatik.staticbundle")
 }
 
-java {
-    sourceSets {
-        create("another")
-    }
+sourceSets {
+    create("another")
 }
 
 val anotherImplementation: Configuration = configurations["anotherImplementation"]
