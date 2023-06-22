@@ -68,14 +68,7 @@ public class StaticBundleProcessor {
             String key = e.getKey();
             String text = e.getValue();
 
-            var p = parseProperty(referenceSettings, key, text);
-            properties.compute(p.key(), (k, v) -> {
-                if (v == null) {
-                    return p;
-                }
-                v.merge(procResources, referenceSettings, key, text);
-                return v;
-            });
+            parseProperty(referenceSettings, key, text);
         }
 
         checkForMissingPluralForms(referenceSettings);
@@ -95,7 +88,7 @@ public class StaticBundleProcessor {
                     throw settings.problem(k, "Extraneous property");
                 }
 
-                property.merge(procResources, settings, k, v);
+                property.merge(settings, parts, k, v);
             }
 
             checkForMissingPluralForms(settings);
@@ -619,7 +612,7 @@ public class StaticBundleProcessor {
 
     record OrdinalProperty(String key, String methodName, Message[/*localeTag*/] messages) implements Property {
         @Override
-        public void merge(ProcessingResources procResources, LocaleSettings settings, String key, String text) {
+        public void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
             messages[settings.localeTagValue] = Message.parse(settings, key, text);
         }
 
@@ -636,8 +629,7 @@ public class StaticBundleProcessor {
     record PluralProperty(String key, String methodName,
                           Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
         @Override
-        public void merge(ProcessingResources procResources, LocaleSettings settings, String key, String text) {
-            var parts = procResources.naming.parse(key);
+        public void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
             if (parts.pluralForm() == -1) {
                 throw settings.problem(key, "Aliases with plural property");
             }
@@ -656,10 +648,9 @@ public class StaticBundleProcessor {
         }
     }
 
-    Property parseProperty(LocaleSettings settings, String key, String text) {
-        var parts = procResources.naming.parse(key);
-        if (parts.pluralForm() != -1) {
+    Property parseProperty(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
 
+        if (parts.pluralForm() != -1) {
             if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
                 throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
             }
@@ -683,12 +674,24 @@ public class StaticBundleProcessor {
         return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(settings, parts.baseKey()), tokens);
     }
 
+    void parseProperty(LocaleSettings settings, String key, String text) {
+        var parts = procResources.naming.parse(key);
+        properties.compute(parts.baseKey(), (k, v) -> {
+            if (v == null) {
+                return parseProperty(settings, parts, key, text);
+            }
+
+            v.merge(settings, parts, key, text);
+            return v;
+        });
+    }
+
     sealed interface Property {
 
         String key();
 
         String methodName();
 
-        void merge(ProcessingResources procResources, LocaleSettings settings, String key, String text);
+        void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text);
     }
 }
