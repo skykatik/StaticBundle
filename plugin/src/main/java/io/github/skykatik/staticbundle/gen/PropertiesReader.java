@@ -1,4 +1,4 @@
-package io.github.skykatik.t9n.gen;
+package io.github.skykatik.staticbundle.gen;
 
 import java.io.IOException;
 import java.io.Reader;

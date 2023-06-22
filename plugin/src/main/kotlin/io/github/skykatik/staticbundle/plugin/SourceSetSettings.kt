@@ -10,5 +10,7 @@ interface SourceSetSettings : Named {
 
     val resourceFilenameFormat: Property<String>
 
+    val naming: Property<PropertyNaming>
+
     fun settings(action: Action<in LocaleSettingsSpec>)
 }

@@ -1,6 +1,6 @@
 package io.github.skykatik.staticbundle.plugin
 
-import io.github.skykatik.t9n.gen.StaticBundleProcessor
+import io.github.skykatik.staticbundle.gen.StaticBundleProcessor
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -32,7 +32,12 @@ abstract class StaticBundleProcessor @Inject constructor(
     @TaskAction
     fun run() {
         val codegenDir = codegenDir.get()
-        val gen = StaticBundleProcessor(project, codegenDir, resourceDir, sett)
+        val gen = StaticBundleProcessor(
+            project,
+            codegenDir,
+            resourceDir,
+            sett
+        )
         gen.validate()
         gen.generate()
     }

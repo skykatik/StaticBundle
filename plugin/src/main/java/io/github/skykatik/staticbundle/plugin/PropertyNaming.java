@@ -1,12 +1,12 @@
-package io.github.skykatik.t9n.gen;
+package io.github.skykatik.staticbundle.plugin;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public interface PropertyKeyNaming {
+public interface PropertyNaming {
 
-    static PropertyKeyNaming instance() {
-        class DefaultImpl implements PropertyKeyNaming {
+    static PropertyNaming instance() {
+        class DefaultImpl implements PropertyNaming {
             static final DefaultImpl INSTANCE = new DefaultImpl();
 
             static final Pattern PATTERN = Pattern.compile("^([\\w._\\-]+)(\\[(\\d)])?$");
@@ -27,6 +27,32 @@ public interface PropertyKeyNaming {
                 }
                 throw new IllegalArgumentException("Invalid property key: '" + key + "'");
             }
+
+            @Override
+            public String toMethodName(String key) {
+                char[] result = new char[key.length()];
+                int d = 0;
+                boolean prevIsDot = false;
+                for (int i = 0; i < key.length(); i++) {
+                    char c = key.charAt(i);
+
+                    if (c == '.') {
+                        prevIsDot = true;
+                    } else if (prevIsDot) {
+                        result[d++] = Character.toUpperCase(c);
+                        prevIsDot = false;
+                    } else {
+                        result[d++] = c;
+                    }
+                }
+
+                return new String(result, 0, d);
+            }
+
+            @Override
+            public String toString() {
+                return "DefaultPropertyKeyNaming.instance()";
+            }
         }
 
         return DefaultImpl.INSTANCE;
@@ -35,6 +61,8 @@ public interface PropertyKeyNaming {
     String format(String baseKey, int pluralForm);
 
     Parts parse(String key);
+
+    String toMethodName(String key);
 
     record Parts(String baseKey, int pluralForm) { }
 }

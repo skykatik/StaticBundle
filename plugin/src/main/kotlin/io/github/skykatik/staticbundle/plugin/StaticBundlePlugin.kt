@@ -4,10 +4,9 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.plugins.JavaPlugin
 import org.gradle.api.plugins.JavaPluginExtension
-import org.gradle.api.tasks.Copy
-import org.gradle.api.tasks.compile.JavaCompile
-import org.gradle.kotlin.dsl.*
-import org.gradle.language.jvm.tasks.ProcessResources
+import org.gradle.kotlin.dsl.apply
+import org.gradle.kotlin.dsl.getByType
+import org.gradle.kotlin.dsl.register
 
 class StaticBundlePlugin : Plugin<Project> {
 
@@ -23,6 +22,8 @@ class StaticBundlePlugin : Plugin<Project> {
 
         ext.sourceSetSettings.all {
             javaExt.sourceSets.named(name) {
+                naming.convention(project.provider { PropertyNaming.instance() })
+
                 val sourceSetName = getTaskName("staticBundle", "Processor")
                 val task = project.tasks.register<StaticBundleProcessor>(sourceSetName, this, this@all)
 

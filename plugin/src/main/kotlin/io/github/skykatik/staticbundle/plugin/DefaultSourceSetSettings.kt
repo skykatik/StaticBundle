@@ -2,6 +2,7 @@ package io.github.skykatik.staticbundle.plugin
 
 import org.gradle.api.Action
 import org.gradle.api.model.ObjectFactory
+import org.gradle.kotlin.dsl.newInstance
 import javax.inject.Inject
 
 abstract class DefaultSourceSetSettings @Inject constructor(
@@ -24,7 +25,7 @@ abstract class DefaultSourceSetSettings @Inject constructor(
     }
 
     private inline fun <reified T : Any> configureAndAdd(items: MutableList<T>, action: Action<in T>) {
-        val item: T = objectFactory.newInstance(T::class.java)
+        val item = objectFactory.newInstance<T>()
         action.execute(item)
         items.add(item)
     }

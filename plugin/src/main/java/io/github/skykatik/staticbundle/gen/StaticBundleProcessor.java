@@ -1,6 +1,7 @@
-package io.github.skykatik.t9n.gen;
+package io.github.skykatik.staticbundle.gen;
 
 import io.github.skykatik.staticbundle.plugin.DefaultSourceSetSettings;
+import io.github.skykatik.staticbundle.plugin.PropertyNaming;
 import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
 import org.gradle.api.file.FileCollection;
@@ -54,7 +55,8 @@ public class StaticBundleProcessor {
             locales.add(new LocaleSettings(internal, i));
         }
 
-        procResources = new ProcessingResources(locales);
+        var naming = sett.getNaming().get();
+        procResources = new ProcessingResources(locales, naming);
     }
 
     public void validate() throws IOException {
@@ -71,7 +73,7 @@ public class StaticBundleProcessor {
                 if (v == null) {
                     return p;
                 }
-                v.merge(referenceSettings, key, text);
+                v.merge(procResources, referenceSettings, key, text);
                 return v;
             });
         }
@@ -87,13 +89,13 @@ public class StaticBundleProcessor {
                 String k = e.getKey();
                 String v = e.getValue();
 
-                var parts = PropertyKeyNaming.instance().parse(k);
+                var parts = procResources.naming.parse(k);
                 var property = properties.get(parts.baseKey());
                 if (property == null) {
                     throw settings.problem(k, "Extraneous property");
                 }
 
-                property.merge(settings, k, v);
+                property.merge(procResources, settings, k, v);
             }
 
             checkForMissingPluralForms(settings);
@@ -164,7 +166,7 @@ public class StaticBundleProcessor {
                 for (int n = 0; n < pluralForms.length; n++) {
                     var pluralForm = pluralForms[n];
                     if (pluralForm == null) {
-                        String key = PropertyKeyNaming.instance().format(p.key, n);
+                        String key = procResources.naming.format(p.key, n);
                         throw settings.problem(key, "Missing plural property");
                     }
                 }
@@ -446,26 +448,11 @@ public class StaticBundleProcessor {
         return "new Locale(" + s + ')';
     }
 
-    static String translateKeyToMethodName(LocaleSettings settings, String key) {
-        char[] result = new char[key.length()];
-        int d = 0;
-        boolean prevIsDot = false;
-        for (int i = 0; i < key.length(); i++) {
-            char c = key.charAt(i);
+    String translateKeyToMethodName(LocaleSettings settings, String key) {
+        String methodName = procResources.naming.toMethodName(key);
 
-            if (c == '.') {
-                prevIsDot = true;
-            } else if (prevIsDot) {
-                result[d++] = Character.toUpperCase(c);
-                prevIsDot = false;
-            } else {
-                result[d++] = c;
-            }
-        }
-
-        String methodName = new String(result, 0, d);
         if (!SourceVersion.isIdentifier(methodName) || SourceVersion.isKeyword(methodName)) {
-            throw settings.problem(key, "Illegal name which translates into incorrect Java identifier");
+            throw settings.problem(key, "Naming '" + procResources.naming + "' generated illegal method name");
         }
 
         return methodName;
@@ -551,7 +538,7 @@ public class StaticBundleProcessor {
         }
     }
 
-    record ProcessingResources(List<LocaleSettings> locales) {
+    record ProcessingResources(List<LocaleSettings> locales, PropertyNaming naming) {
 
         boolean isSingle() {
             return locales.size() == 1;
@@ -632,7 +619,7 @@ public class StaticBundleProcessor {
 
     record OrdinalProperty(String key, String methodName, Message[/*localeTag*/] messages) implements Property {
         @Override
-        public void merge(LocaleSettings settings, String key, String text) {
+        public void merge(ProcessingResources procResources, LocaleSettings settings, String key, String text) {
             messages[settings.localeTagValue] = Message.parse(settings, key, text);
         }
 
@@ -649,8 +636,8 @@ public class StaticBundleProcessor {
     record PluralProperty(String key, String methodName,
                           Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
         @Override
-        public void merge(LocaleSettings settings, String key, String text) {
-            var parts = PropertyKeyNaming.instance().parse(key);
+        public void merge(ProcessingResources procResources, LocaleSettings settings, String key, String text) {
+            var parts = procResources.naming.parse(key);
             if (parts.pluralForm() == -1) {
                 throw settings.problem(key, "Aliases with plural property");
             }
@@ -670,7 +657,7 @@ public class StaticBundleProcessor {
     }
 
     Property parseProperty(LocaleSettings settings, String key, String text) {
-        var parts = PropertyKeyNaming.instance().parse(key);
+        var parts = procResources.naming.parse(key);
         if (parts.pluralForm() != -1) {
 
             if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
@@ -702,6 +689,6 @@ public class StaticBundleProcessor {
 
         String methodName();
 
-        void merge(LocaleSettings settings, String key, String text);
+        void merge(ProcessingResources procResources, LocaleSettings settings, String key, String text);
     }
 }
