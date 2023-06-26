@@ -54,7 +54,8 @@ The arguments in _reference_ locale are defined in the format: `{index:name:type
 where `index` is **zero-based** position of argument, `name` is valid Java identifier name
 and `type` is optional type of generated parameter.
 
-For other bundles you can use simplified format `{index}` or `{name}`.
+You can use simplified forms like a `{index}` or `{name}` for other bundles, or
+in the reference one to reuse defined argument.
 
 ### Property Arguments
 
