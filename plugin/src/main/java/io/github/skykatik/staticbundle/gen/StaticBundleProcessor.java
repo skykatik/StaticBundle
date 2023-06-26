@@ -70,6 +70,7 @@ public class StaticBundleProcessor {
         }
 
         checkForMissingPluralForms(referenceSettings);
+        checkForUnresolvedPropertyArgs(referenceSettings);
 
         for (int i = 1; i < procResources.locales.size(); i++) {
             var settings = procResources.locales.get(i);
@@ -90,6 +91,77 @@ public class StaticBundleProcessor {
             }
 
             checkForMissingPluralForms(settings);
+            checkForUnresolvedPropertyArgs(settings);
+        }
+    }
+
+    private void checkForUnresolvedPropertyArgs(LocaleSettings settings) {
+        for (Property value : properties.values()) {
+            if (value instanceof PluralProperty p) {
+                var pluralForms = p.messages[settings.localeTagValue];
+                for (int n = 0; n < pluralForms.length; n++) {
+                    var pluralForm = pluralForms[n];
+                    String key = procResources.naming.format(p.key, n);
+                    for (Arg arg : pluralForm.args) {
+                        if (arg instanceof PropertyArg pa) {
+                            checkForUnresolvedPropertyArg0(settings, p, key, pa);
+                        }
+                    }
+                }
+            } else if (value instanceof OrdinalProperty p) {
+                var message = p.messages[settings.localeTagValue];
+                for (Arg arg : message.args) {
+                    if (arg instanceof PropertyArg pa) {
+                        checkForUnresolvedPropertyArg0(settings, p, p.key, pa);
+                    }
+                }
+            } else {
+                throw new IllegalStateException();
+            }
+        }
+    }
+
+    private void checkForUnresolvedPropertyArg0(LocaleSettings settings, Property p, String key, PropertyArg pa) {
+        var property = properties.get(pa.baseKey());
+        if (property == null) {
+            throw settings.problem(key, "No property '" + pa.baseKey() + "' found");
+        }
+
+        if (property == p) {
+            throw settings.problem(key, "Recursive property argument");
+        }
+
+        if (property instanceof PluralProperty o) {
+            if (!(pa instanceof PluralPropertyArg pp)) {
+                throw settings.problem(key, "Property '" + o.key + "' is plural, but argument consider it as ordinal");
+            }
+
+            int i = p.argTable().index(pp.amountArg);
+            if (i == -1) {
+                throw settings.problem(key, "Unknown amount argument '" + pp.amountArg + "' for plural property '" + o.key + "'");
+            }
+
+            pp.methodName = o.methodName;
+        } else if (property instanceof OrdinalProperty o) {
+            if (!(pa instanceof OrdinalPropertyArg pp)) {
+                throw settings.problem(key, "Property '" + o.key + "' is ordinal, but argument consider it as plural");
+            }
+
+            if (o.argTable.size() != pp.propertyArgs.length) {
+                throw settings.problem(key, "Property '" + o.key + "' requires '" + o.argTable.size() + "'" +
+                        " arguments, but passed '" + pp.propertyArgs.length + "'");
+            }
+
+            for (String propertyArg : pp.propertyArgs) {
+                int i = p.argTable().index(propertyArg);
+                if (i == -1) {
+                    throw settings.problem(key, "Unknown argument '" + propertyArg + "' for property '" + o.key + "'");
+                }
+            }
+
+            pp.methodName = o.methodName;
+        } else {
+            throw new IllegalStateException();
         }
     }
 
@@ -222,12 +294,16 @@ public class StaticBundleProcessor {
 
         var referenceMessage = p.messages[REFERENCE_LOCALE_TAG];
         var parameters = Arrays.stream(referenceMessage.args)
-                .filter(a -> a.isParameter)
+                .<ParameterArg>mapMulti((arg, consumer) -> {
+                    if (arg instanceof ParameterArg pa) {
+                        consumer.accept(pa);
+                    }
+                })
                 .sorted(Comparator.comparingInt(c -> c.pos))
                 .toList();
         for (int i = 0; i < parameters.size(); i++) {
-            Arg arg = parameters.get(i);
-            sink.append(arg.type).append(" ").append(arg.name);
+            var parameterArg = parameters.get(i);
+            sink.append(parameterArg.type).append(" ").append(parameterArg.name);
 
             if (i != parameters.size() - 1) {
                 sink.append(", ");
@@ -274,7 +350,30 @@ public class StaticBundleProcessor {
                 Arg arg = message.args[k++];
 
                 sink.append(" + ");
-                sink.append(arg.name);
+                if (arg instanceof CodeArg c) {
+                    sink.append(c.code);
+                } else if (arg instanceof OrdinalPropertyArg p) {
+                    sink.append(p.methodName);
+                    sink.append('(');
+                    for (int v = 0; v < p.propertyArgs.length; v++) {
+                        sink.append(p.propertyArgs[v]);
+                        if (v != p.propertyArgs.length - 1) {
+                            sink.append(", ");
+                        }
+                    }
+                    sink.append(')');
+                } else if (arg instanceof PluralPropertyArg p) {
+                    sink.append(p.methodName);
+                    sink.append('(');
+                    sink.append(p.amountArg);
+                    sink.append(')');
+                } else if (arg instanceof DefaultArg p) {
+                    sink.append(p.name);
+                } else if (arg instanceof ParameterArg p) {
+                    sink.append(p.name);
+                } else {
+                    throw new IllegalStateException();
+                }
             }
 
             if (i != message.tokens.length - 1) {
@@ -556,20 +655,7 @@ public class StaticBundleProcessor {
                 if (c == '{') {
                     char p = i - 1 >= 0 ? text.charAt(i - 1) : '\0';
                     int start = i + 1;
-                    int end = -1;
-                    for (int j = i + 1; j < text.length(); j++) {
-                        char o = text.charAt(j);
-                        if (o == '\\') {
-                            i++;
-                            continue;
-                        }
-
-                        if (o == '}') {
-                            end = j;
-                            break;
-                        }
-                    }
-
+                    int end = indexOfUnescaped(text, i, '}');
                     if (end == -1) {
                         continue;
                     }
@@ -580,86 +666,25 @@ public class StaticBundleProcessor {
                     }
 
                     boolean call = p == '$';
-                    int begin = call ? i - 1 : i;
-                    tokens.add(makeLiteral(text.substring(prev, begin)));
-                    boolean isParameter = !call;
+                    boolean propertyCall = p == '#';
 
-                    String type = "String";
-
-                    String name;
-                    int pos = -1;
-                    if (isParameter) {
-                        String[] parts = argText.split(":");
-
-                        if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
-                            if (parts.length < 2) {
-                                continue;
-                            }
-                            String posStr = parts[0];
-                            name = parts[1];
-                            try {
-                                pos = Integer.parseInt(posStr);
-                            } catch (IllegalArgumentException e) {
-                                continue;
-                            }
-
-                            if (pos < 0) {
-                                throw settings.problem(key, "Argument with negative index: '" + name + "'");
-                            }
-
-                            if (!isValidJavaIdentifier(name)) {
-                                throw settings.problem(key, "Argument with illegal name: '" + name + "'");
-                            }
-
-                            int occupiedIndex = argTable.index(name);
-                            if (occupiedIndex != -1) {
-                                throw settings.problem(key, "Argument with name: '" +
-                                        name + "' reuses name of index '" + occupiedIndex + "'");
-                            }
-
-                            String occupiedName = argTable.add(pos, name);
-                            if (occupiedName != null) {
-                                throw settings.problem(key, "Argument with name: '" +
-                                        name + "' reuses index of '" + occupiedName + "'");
-                            }
-
-                            if (parts.length >= 3) {
-                                type = typeOf(parts[2]);
-                            }
-                        } else {
-                            try {
-                                pos = Integer.parseInt(parts[0]);
-                                if (pos < 0) {
-                                    throw settings.problem(key, "Argument with negative index: '" + parts[0] + "'");
-                                }
-                                name = argTable.name(pos);
-                                if (argTable.isEmpty()) {
-                                    throw settings.problem(key, "Extraneous argument with index: '" + parts[0] + "'");
-                                }
-                                if (name == null) {
-                                    throw settings.problem(key, "Argument index is out of range: [0, " + argTable.size() + ")");
-                                }
-                            } catch (IllegalArgumentException e) {
-                                name = parts[0];
-                                if (argTable.index(name) == -1) {
-                                    throw settings.problem(key, "Argument with unknown name: '" + name + "'");
-                                }
-                            }
-
-                            if (name != null && !isValidJavaIdentifier(name)) {
-                                throw settings.problem(key, "Argument with illegal name: '" + name + "'");
-                            }
-
-                            if (parts.length >= 2) {
-                                type = typeOf(parts[1]);
-                            }
-                        }
+                    Arg arg;
+                    if (call) {
+                        arg = new CodeArg(argText);
+                    } else if (propertyCall) {
+                        arg = parsePropertyArg(settings, argTable, key, argText);
                     } else {
-                        name = argText;
+                        arg = parseParameterArg(settings, argTable, key, argText);
                     }
 
-                    args.add(new Arg(pos, isParameter, type, name));
+                    if (arg == null) {
+                        continue;
+                    }
 
+                    int begin = call || propertyCall ? i - 1 : i;
+                    tokens.add(makeLiteral(text.substring(prev, begin)));
+
+                    args.add(arg);
                     prev = end + 1;
                 }
             }
@@ -679,12 +704,145 @@ public class StaticBundleProcessor {
             return new Message(args.toArray(EMPTY_ARG_ARRAY), tokens.toArray(EMPTY_STRING_ARRAY));
         }
 
+        static Arg parsePropertyArg(LocaleSettings settings, ArgTable argTable,
+                                    String key, String argText) {
+
+            for (int i = 0; i < argText.length(); i++) {
+                char c = argText.charAt(i);
+
+                if (c == '(') {
+                    int end = indexOfUnescaped(argText, i, ')');
+                    if (end == -1 || end != argText.length() - 1) {
+                        return null;
+                    }
+
+                    String baseKey = argText.substring(0, i);
+                    var propertyArgs = new ArrayList<String>();
+                    int prev = i + 1;
+                    for (int k = i + 1; k < end; k++) {
+                        c = argText.charAt(k);
+                        if (Character.isWhitespace(c)) {
+                            prev = k + 1;
+                            continue;
+                        }
+
+                        if (c == ',') {
+                            propertyArgs.add(argText.substring(prev, k));
+                            prev = k + 1;
+                        }
+                    }
+                    if (prev != end) {
+                        propertyArgs.add(argText.substring(prev, end));
+                    }
+
+                    return new OrdinalPropertyArg(baseKey, propertyArgs.toArray(EMPTY_STRING_ARRAY));
+                } else if (c == '[') {
+                    int end = indexOfUnescaped(argText, i, ']');
+                    if (end == -1 || end != argText.length() - 1) {
+                        return null;
+                    }
+
+                    String baseKey = argText.substring(0, i);
+                    String amountArg = argText.substring(i + 1, end);
+                    return new PluralPropertyArg(baseKey, amountArg);
+                }
+            }
+            return new OrdinalPropertyArg(argText, EMPTY_STRING_ARRAY);
+        }
+
+        static int indexOfUnescaped(String text, int base, char e) {
+            for (int i = base; i < text.length(); i++) {
+                char c = text.charAt(i);
+                if (c == '\\') {
+                    i++;
+                    continue;
+                }
+
+                if (c == e) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        static Arg parseParameterArg(LocaleSettings settings, ArgTable argTable,
+                                     String key, String argText) {
+            if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                String[] parts = argText.split(":");
+                if (parts.length < 2) {
+                    return null;
+                }
+                String posStr = parts[0];
+                String name = parts[1];
+                int pos;
+                try {
+                    pos = Integer.parseInt(posStr);
+                } catch (IllegalArgumentException e) {
+                    return null;
+                }
+
+                if (pos < 0) {
+                    throw settings.problem(key, "Argument with negative index: '" + name + "'");
+                }
+
+                if (!isValidJavaIdentifier(name)) {
+                    throw settings.problem(key, "Argument with illegal name: '" + name + "'");
+                }
+
+                int occupiedIndex = argTable.index(name);
+                if (occupiedIndex != -1) {
+                    throw settings.problem(key, "Argument with name: '" +
+                            name + "' reuses name of index '" + occupiedIndex + "'");
+                }
+
+                String occupiedName = argTable.add(pos, name);
+                if (occupiedName != null) {
+                    throw settings.problem(key, "Argument with name: '" +
+                            name + "' reuses index of '" + occupiedName + "'");
+                }
+
+                String type = "String";
+                if (parts.length >= 3) {
+                    type = typeOf(parts[2]);
+                }
+
+                return new ParameterArg(pos, type, name);
+            }
+
+            String name;
+            int pos;
+            try {
+                pos = Integer.parseInt(argText);
+                if (pos < 0) {
+                    throw settings.problem(key, "Argument with negative index: '" + argText + "'");
+                }
+                name = argTable.name(pos);
+                if (argTable.isEmpty()) {
+                    throw settings.problem(key, "Extraneous argument with index: '" + argText + "'");
+                }
+                if (name == null) {
+                    throw settings.problem(key, "Argument index is out of range: [0, " + argTable.size() + ")");
+                }
+            } catch (IllegalArgumentException e) {
+                name = argText;
+                if (argTable.index(name) == -1) {
+                    throw settings.problem(key, "Argument with unknown name: '" + name + "'");
+                }
+            }
+
+            if (name != null && !isValidJavaIdentifier(name)) {
+                throw settings.problem(key, "Argument with illegal name: '" + name + "'");
+            }
+            return new DefaultArg(name);
+        }
+
         static final Arg[] EMPTY_ARG_ARRAY = new Arg[0];
 
         static String typeOf(String group) {
             return switch (group.toLowerCase(Locale.ROOT)) {
                 case "string" -> "String";
                 case "int" -> "int";
+                case "long" -> "long";
                 default -> throw new IllegalStateException(group);
             };
         }
@@ -698,7 +856,66 @@ public class StaticBundleProcessor {
         }
     }
 
-    record Arg(int pos, boolean isParameter, String type, String name) {
+    record CodeArg(String code) implements Arg {
+    }
+
+    sealed interface PropertyArg extends Arg {
+        String baseKey();
+
+        String methodName();
+    }
+
+    static final class PluralPropertyArg implements PropertyArg {
+        final String baseKey;
+        final String amountArg;
+
+        String methodName;
+
+        PluralPropertyArg(String baseKey, String amountArg) {
+            this.baseKey = baseKey;
+            this.amountArg = amountArg;
+        }
+
+        @Override
+        public String baseKey() {
+            return baseKey;
+        }
+
+        @Override
+        public String methodName() {
+            return methodName;
+        }
+    }
+
+    static final class OrdinalPropertyArg implements PropertyArg {
+        final String baseKey;
+        final String[] propertyArgs;
+
+        String methodName;
+
+        OrdinalPropertyArg(String baseKey, String[] propertyArgs) {
+            this.baseKey = baseKey;
+            this.propertyArgs = propertyArgs;
+        }
+
+        @Override
+        public String baseKey() {
+            return baseKey;
+        }
+
+        @Override
+        public String methodName() {
+            return methodName;
+        }
+    }
+
+    record ParameterArg(int pos, String type, String name) implements Arg {
+    }
+
+    record DefaultArg(String name) implements Arg {
+    }
+
+    sealed interface Arg {
     }
 
     record OrdinalProperty(String key, String methodName,
