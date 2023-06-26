@@ -707,9 +707,39 @@ public class StaticBundleProcessor {
                         throw settings.problem(key, "No argument for index '" + i + "'");
                     }
                 }
+
+                for (int i = 0; i < args.size(); i++) {
+                    var arg = args.get(i);
+                    if (arg instanceof DeferedArg d) {
+                        var resolvedName = d.name != null
+                                ? resolveArg(settings, key, argTable, d.name)
+                                : resolveArg(settings, key, argTable, d.pos);
+
+                        args.set(i, new DefaultArg(resolvedName));
+                    }
+                }
             }
 
             return new Message(args.toArray(EMPTY_ARG_ARRAY), tokens.toArray(EMPTY_STRING_ARRAY));
+        }
+
+        static String resolveArg(LocaleSettings settings, String key, ArgTable argTable, String name) {
+            if (argTable.index(name) == -1) {
+                throw settings.problem(key, "Argument with unknown name: '" + name + "'");
+            }
+            return name;
+        }
+
+        static String resolveArg(LocaleSettings settings, String key, ArgTable argTable, int pos) {
+            String name = argTable.name(pos);
+
+            if (argTable.isEmpty()) {
+                throw settings.problem(key, "Extraneous argument with index: '" + pos + "'");
+            }
+            if (name == null) {
+                throw settings.problem(key, "Argument index is out of range: [0, " + argTable.size() + ")");
+            }
+            return name;
         }
 
         static Arg parsePropertyArg(LocaleSettings settings, ArgTable argTable,
@@ -775,11 +805,8 @@ public class StaticBundleProcessor {
 
         static Arg parseParameterArg(LocaleSettings settings, ArgTable argTable,
                                      String key, String argText) {
-            if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
-                String[] parts = argText.split(":");
-                if (parts.length < 2) {
-                    return null;
-                }
+            String[] parts;
+            if (settings.localeTagValue == REFERENCE_LOCALE_TAG && (parts = argText.split(":")).length >= 2) {
                 String posStr = parts[0];
                 String name = parts[1];
                 int pos;
@@ -813,6 +840,7 @@ public class StaticBundleProcessor {
                 if (parts.length >= 3) {
                     type = parts[2];
                 }
+                // TODO check end
 
                 return new ParameterArg(pos, type, name);
             }
@@ -824,18 +852,18 @@ public class StaticBundleProcessor {
                 if (pos < 0) {
                     throw settings.problem(key, "Argument with negative index: '" + argText + "'");
                 }
-                name = argTable.name(pos);
-                if (argTable.isEmpty()) {
-                    throw settings.problem(key, "Extraneous argument with index: '" + argText + "'");
+
+                if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                    return new DeferedArg(pos, null);
                 }
-                if (name == null) {
-                    throw settings.problem(key, "Argument index is out of range: [0, " + argTable.size() + ")");
-                }
+
+                name = resolveArg(settings, key, argTable, pos);
             } catch (IllegalArgumentException e) {
-                name = argText;
-                if (argTable.index(name) == -1) {
-                    throw settings.problem(key, "Argument with unknown name: '" + name + "'");
+                if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                    return new DeferedArg(-1, argText);
                 }
+
+                name = resolveArg(settings, key, argTable, argText);
             }
 
             if (name != null && !isValidJavaIdentifier(name)) {
@@ -927,6 +955,10 @@ public class StaticBundleProcessor {
     }
 
     record ParameterArg(int pos, String type, String name) implements Arg {
+    }
+
+    record DeferedArg(int pos, String name) implements Arg {
+
     }
 
     record DefaultArg(String name) implements Arg {
