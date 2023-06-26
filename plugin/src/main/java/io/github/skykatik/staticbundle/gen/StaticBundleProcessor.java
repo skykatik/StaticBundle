@@ -13,12 +13,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.regex.Pattern;
 
 public class StaticBundleProcessor {
 
     static final int REFERENCE_LOCALE_TAG = 0;
-    static final Pattern ARGS = Pattern.compile("\\{(\\d+:)?([a-z0-9:{}\\[\\]]+)}", Pattern.CASE_INSENSITIVE);
     static final String indent = " ".repeat(4);
     static final int lineWrap = 120;
 
@@ -83,12 +81,12 @@ public class StaticBundleProcessor {
                 String v = e.getValue();
 
                 var parts = procResources.naming.parse(k);
-                var property = properties.get(parts.baseKey());
-                if (property == null) {
+                var referenceProperty = properties.get(parts.baseKey());
+                if (referenceProperty == null) {
                     throw settings.problem(k, "Extraneous property");
                 }
 
-                property.merge(settings, parts, k, v);
+                referenceProperty.merge(settings, parts, k, v);
             }
 
             checkForMissingPluralForms(settings);
@@ -108,8 +106,7 @@ public class StaticBundleProcessor {
                     import java.util.Locale;
                     import java.util.Objects;
                     import io.github.skykatik.staticbundle.MessageSource;
-                    import io.github.skykatik.staticbundle.LocaleTag;
-                    
+                                        
                     """);
 
             sink.append("public final class ").append(className).append(" extends MessageSource");
@@ -224,14 +221,15 @@ public class StaticBundleProcessor {
     void generateOrdinalPropertyMethod(CharSink sink, OrdinalProperty p) throws IOException {
 
         var referenceMessage = p.messages[REFERENCE_LOCALE_TAG];
-        Arg[] sortedArgs = new Arg[referenceMessage.args.length];
-        System.arraycopy(referenceMessage.args, 0, sortedArgs, 0, referenceMessage.args.length);
-        Arrays.sort(sortedArgs, Comparator.comparingInt(c -> c.pos));
-        for (int i = 0; i < sortedArgs.length; i++) {
-            Arg arg = sortedArgs[i];
+        var parameters = Arrays.stream(referenceMessage.args)
+                .filter(a -> a.isParameter)
+                .sorted(Comparator.comparingInt(c -> c.pos))
+                .toList();
+        for (int i = 0; i < parameters.size(); i++) {
+            Arg arg = parameters.get(i);
             sink.append(arg.type).append(" ").append(arg.name);
 
-            if (i != sortedArgs.length - 1) {
+            if (i != parameters.size() - 1) {
                 sink.append(", ");
             }
         }
@@ -446,12 +444,16 @@ public class StaticBundleProcessor {
     String translateKeyToMethodName(LocaleSettings settings, String key) {
         String methodName = procResources.naming.toMethodName(key);
 
-        if (!SourceVersion.isIdentifier(methodName) || SourceVersion.isKeyword(methodName)) {
+        if (!isValidJavaIdentifier(methodName)) {
             throw settings.problem(key, "Naming '" + procResources.naming +
                     "' generated illegal method name: '" + methodName + "'");
         }
 
         return methodName;
+    }
+
+    static boolean isValidJavaIdentifier(String name) {
+        return SourceVersion.isIdentifier(name) && !SourceVersion.isKeyword(name);
     }
 
     static String escape(char c) {
@@ -543,55 +545,141 @@ public class StaticBundleProcessor {
 
     record Message(Arg[] args, String[] tokens) {
 
-        static Message parse(LocaleSettings settings, String key, String text) {
+        static Message parse(LocaleSettings settings, ArgTable argTable, String key, String text) {
             var tokens = new ArrayList<String>();
             var args = new ArrayList<Arg>();
-            var matcher = ARGS.matcher(text);
-            int argPos = 0;
             int prev = 0;
-            while (matcher.find()) {
-                tokens.add(makeLiteral(text.substring(prev, matcher.start())));
 
-                String[] nameAndType = matcher.group(2).split(":");
-                String name = nameAndType[0];
-                String type = "String";
-                if (nameAndType.length == 2) {
-                    type = typeOf(nameAndType[1]);
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+
+                if (c == '{') {
+                    char p = i - 1 >= 0 ? text.charAt(i - 1) : '\0';
+                    int start = i + 1;
+                    int end = -1;
+                    for (int j = i + 1; j < text.length(); j++) {
+                        char o = text.charAt(j);
+                        if (o == '\\') {
+                            i++;
+                            continue;
+                        }
+
+                        if (o == '}') {
+                            end = j;
+                            break;
+                        }
+                    }
+
+                    if (end == -1) {
+                        continue;
+                    }
+
+                    String argText = text.substring(start, end);
+                    if (argText.isEmpty()) {
+                        continue;
+                    }
+
+                    boolean call = p == '$';
+                    int begin = call ? i - 1 : i;
+                    tokens.add(makeLiteral(text.substring(prev, begin)));
+                    boolean isParameter = !call;
+
+                    String type = "String";
+
+                    String name;
+                    int pos = -1;
+                    if (isParameter) {
+                        String[] parts = argText.split(":");
+
+                        if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                            if (parts.length < 2) {
+                                continue;
+                            }
+                            String posStr = parts[0];
+                            name = parts[1];
+                            try {
+                                pos = Integer.parseInt(posStr);
+                            } catch (IllegalArgumentException e) {
+                                continue;
+                            }
+
+                            if (pos < 0) {
+                                throw settings.problem(key, "Argument with negative index: '" + name + "'");
+                            }
+
+                            if (!isValidJavaIdentifier(name)) {
+                                throw settings.problem(key, "Argument with illegal name: '" + name + "'");
+                            }
+
+                            int occupiedIndex = argTable.index(name);
+                            if (occupiedIndex != -1) {
+                                throw settings.problem(key, "Argument with name: '" +
+                                        name + "' reuses name of index '" + occupiedIndex + "'");
+                            }
+
+                            String occupiedName = argTable.add(pos, name);
+                            if (occupiedName != null) {
+                                throw settings.problem(key, "Argument with name: '" +
+                                        name + "' reuses index of '" + occupiedName + "'");
+                            }
+
+                            if (parts.length >= 3) {
+                                type = typeOf(parts[2]);
+                            }
+                        } else {
+                            try {
+                                pos = Integer.parseInt(parts[0]);
+                                if (pos < 0) {
+                                    throw settings.problem(key, "Argument with negative index: '" + parts[0] + "'");
+                                }
+                                name = argTable.name(pos);
+                                if (argTable.isEmpty()) {
+                                    throw settings.problem(key, "Extraneous argument with index: '" + parts[0] + "'");
+                                }
+                                if (name == null) {
+                                    throw settings.problem(key, "Argument index is out of range: [0, " + argTable.size() + ")");
+                                }
+                            } catch (IllegalArgumentException e) {
+                                name = parts[0];
+                                if (argTable.index(name) == -1) {
+                                    throw settings.problem(key, "Argument with unknown name: '" + name + "'");
+                                }
+                            }
+
+                            if (name != null && !isValidJavaIdentifier(name)) {
+                                throw settings.problem(key, "Argument with illegal name: '" + name + "'");
+                            }
+
+                            if (parts.length >= 2) {
+                                type = typeOf(parts[1]);
+                            }
+                        }
+                    } else {
+                        name = argText;
+                    }
+
+                    args.add(new Arg(pos, isParameter, type, name));
+
+                    prev = end + 1;
                 }
-
-                String posStr = matcher.group(1);
-                int pos;
-                if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
-                    if (posStr == null) {
-                        throw settings.problem(key, "Non-indexed argument: '" + name + "'");
-                    }
-
-                    pos = Integer.parseInt(posStr.substring(0, posStr.length() - 1));
-
-                    if (pos < 0) {
-                        throw settings.problem(key, "Argument with negative index: '" + name + "'");
-                    }
-                } else {
-                    if (posStr != null) {
-                        throw settings.problem(key, "Mixed argument position: '" + name + "'");
-                    }
-
-                    pos = argPos++;
-                }
-
-                args.add(new Arg(pos, type, name));
-
-                prev = matcher.end();
             }
             if (prev != text.length()) {
                 tokens.add(makeLiteral(text.substring(prev)));
+            }
+
+            if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
+                argTable.trim();
+                for (int i = 0; i < argTable.names.length; i++) {
+                    if (argTable.names[i] == null) {
+                        throw settings.problem(key, "No argument for index '" + i + "'");
+                    }
+                }
             }
 
             return new Message(args.toArray(EMPTY_ARG_ARRAY), tokens.toArray(EMPTY_STRING_ARRAY));
         }
 
         static final Arg[] EMPTY_ARG_ARRAY = new Arg[0];
-        static final String[] EMPTY_STRING_ARRAY = new String[0];
 
         static String typeOf(String group) {
             return switch (group.toLowerCase(Locale.ROOT)) {
@@ -610,13 +698,15 @@ public class StaticBundleProcessor {
         }
     }
 
-    record Arg(int pos, String type, String name) {
+    record Arg(int pos, boolean isParameter, String type, String name) {
     }
 
-    record OrdinalProperty(String key, String methodName, Message[/*localeTag*/] messages) implements Property {
+    record OrdinalProperty(String key, String methodName,
+                           ArgTable argTable,
+                           Message[/*localeTag*/] messages) implements Property {
         @Override
         public void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
-            messages[settings.localeTagValue] = Message.parse(settings, key, text);
+            messages[settings.localeTagValue] = Message.parse(settings, argTable, key, text);
         }
 
         @Override
@@ -630,6 +720,7 @@ public class StaticBundleProcessor {
     }
 
     record PluralProperty(String key, String methodName,
+                          ArgTable argTable,
                           Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
         @Override
         public void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
@@ -641,7 +732,7 @@ public class StaticBundleProcessor {
                 throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
             }
 
-            var msg = Message.parse(settings, key, text);
+            var msg = Message.parse(settings, argTable, key, text);
             var locale = messages[settings.localeTagValue];
             if (locale == null) {
                 messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
@@ -658,7 +749,8 @@ public class StaticBundleProcessor {
                 throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
             }
 
-            var msg = Message.parse(settings, key, text);
+            var argNameTable = new ArgTable();
+            var msg = Message.parse(settings, argNameTable, key, text);
             var messages = new Message[procResources.locales.size()][];
 
             var locale = messages[settings.localeTagValue];
@@ -667,14 +759,17 @@ public class StaticBundleProcessor {
             }
             locale[parts.pluralForm()] = msg;
 
-            return new PluralProperty(parts.baseKey(), translateKeyToMethodName(settings, parts.baseKey()), messages);
+            String methodName = translateKeyToMethodName(settings, parts.baseKey());
+            return new PluralProperty(parts.baseKey(), methodName, argNameTable, messages);
         }
 
-        var msg = Message.parse(settings, key, text);
+        var argNameTable = new ArgTable();
+        var msg = Message.parse(settings, argNameTable, key, text);
         var tokens = new Message[procResources.locales.size()];
         tokens[settings.localeTagValue] = msg;
 
-        return new OrdinalProperty(parts.baseKey(), translateKeyToMethodName(settings, parts.baseKey()), tokens);
+        String methodName = translateKeyToMethodName(settings, key);
+        return new OrdinalProperty(parts.baseKey(), methodName, argNameTable, tokens);
     }
 
     void parseProperty(LocaleSettings settings, String key, String text) {
@@ -695,6 +790,57 @@ public class StaticBundleProcessor {
 
         String methodName();
 
+        ArgTable argTable();
+
         void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text);
     }
+
+    static class ArgTable {
+        int count;
+        String[] names = EMPTY_STRING_ARRAY;
+
+        String add(int index, String name) {
+            if (index >= names.length) {
+                names = Arrays.copyOf(names, names.length + 4);
+            }
+            String currentName = names[index];
+            if (currentName == null) {
+                names[index] = name;
+                count++;
+                return null;
+            }
+            return currentName;
+        }
+
+        String name(int index) {
+            return names[index];
+        }
+
+        int index(String name) {
+            for (int i = 0; i < count; i++) {
+                if (name.equals(names[i])) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        int maxIndex() {
+            return names.length;
+        }
+
+        boolean isEmpty() {
+            return names == EMPTY_STRING_ARRAY;
+        }
+
+        int size() {
+            return count;
+        }
+
+        public void trim() {
+            names = Arrays.copyOf(names, count);
+        }
+    }
+
+    static final String[] EMPTY_STRING_ARRAY = new String[0];
 }
