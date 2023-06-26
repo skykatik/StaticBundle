@@ -125,6 +125,7 @@ public class StaticBundleProcessor {
             sink.end();
 
             sink.ln();
+            sink.append("@Override").ln();
             sink.append("public LocaleTag localeTag()");
             sink.begin();
             sink.append("return localeTag;");
@@ -186,7 +187,6 @@ public class StaticBundleProcessor {
             sink.append("return switch (localeTag)");
             sink.begin();
         }
-
 
         for (int localeTag = 0; localeTag < procResources.locales.size(); localeTag++) {
             var localeSettings = procResources.locales.get(localeTag);
@@ -327,6 +327,7 @@ public class StaticBundleProcessor {
     void generatePluralFormMethod(CharSink sink) throws IOException {
         sink.ln();
 
+        sink.append("@Override").ln();
         sink.append("public int pluralForm(long value)");
         sink.begin();
 
@@ -446,7 +447,8 @@ public class StaticBundleProcessor {
         String methodName = procResources.naming.toMethodName(key);
 
         if (!SourceVersion.isIdentifier(methodName) || SourceVersion.isKeyword(methodName)) {
-            throw settings.problem(key, "Naming '" + procResources.naming + "' generated illegal method name");
+            throw settings.problem(key, "Naming '" + procResources.naming +
+                    "' generated illegal method name: '" + methodName + "'");
         }
 
         return methodName;
@@ -481,7 +483,7 @@ public class StaticBundleProcessor {
         return out.toString();
     }
 
-    static String translateLocaleToLocaleTag(Locale locale) {
+    static String translateLocaleToTag(Locale locale) {
         if (locale.equals(Locale.ROOT)) {
             return "ROOT";
         }
@@ -512,7 +514,7 @@ public class StaticBundleProcessor {
         }
 
         LocaleSettings(Locale locale, int localeTagValue, int pluralFormsCount, String pluralFormFunction) {
-            this(locale, translateLocaleToLocaleTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
+            this(locale, translateLocaleToTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
         }
 
         IllegalStateException problem(String key, String text) {
