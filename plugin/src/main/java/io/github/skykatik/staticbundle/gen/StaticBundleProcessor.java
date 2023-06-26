@@ -177,11 +177,18 @@ public class StaticBundleProcessor {
             sink.append("""
                     import java.util.Locale;
                     import java.util.Objects;
-                    import io.github.skykatik.staticbundle.MessageSource;
-                                        
                     """);
+            if (!className.equals("MessageSource")) {
+                sink.append("import io.github.skykatik.staticbundle.MessageSource;").ln();
+            }
+            sink.ln();
 
-            sink.append("public final class ").append(className).append(" extends MessageSource");
+            sink.append("public final class ").append(className).append(" extends ");
+            if (className.equals("MessageSource")) {
+                sink.append("io.github.skykatik.staticbundle.");
+            }
+            sink.append("MessageSource");
+
             sink.begin();
 
             sink.append("public final LocaleTag localeTag;");
