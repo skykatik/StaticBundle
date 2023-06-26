@@ -32,15 +32,15 @@ public interface PropertyNaming {
             public String toMethodName(String key) {
                 char[] result = new char[key.length()];
                 int d = 0;
-                boolean prevIsDot = false;
+                boolean marker = false;
                 for (int i = 0; i < key.length(); i++) {
                     char c = key.charAt(i);
 
-                    if (c == '.') {
-                        prevIsDot = true;
-                    } else if (prevIsDot) {
+                    if (c == '.' || c == '_' || c == '-') {
+                        marker = true;
+                    } else if (marker) {
                         result[d++] = Character.toUpperCase(c);
-                        prevIsDot = false;
+                        marker = false;
                     } else {
                         result[d++] = c;
                     }
