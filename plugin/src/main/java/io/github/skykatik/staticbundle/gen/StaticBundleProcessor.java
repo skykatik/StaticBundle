@@ -115,7 +115,7 @@ public class StaticBundleProcessor {
             sink.append("public final class ").append(className).append(" extends MessageSource");
             sink.begin();
 
-            sink.append("final LocaleTag localeTag;");
+            sink.append("public final LocaleTag localeTag;");
             sink.ln();
 
             sink.ln();
@@ -307,7 +307,7 @@ public class StaticBundleProcessor {
         sink.append(';');
         sink.ln(2);
 
-        sink.append("final Locale locale;");
+        sink.append("public final Locale locale;");
         sink.ln(2);
 
         sink.append("LocaleTag(Locale locale)");
