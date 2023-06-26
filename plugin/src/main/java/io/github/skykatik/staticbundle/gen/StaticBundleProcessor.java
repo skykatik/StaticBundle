@@ -411,7 +411,6 @@ public class StaticBundleProcessor {
         sink.append(';');
         sink.ln(2);
 
-        sink.append("@Override").ln();
         sink.append("public final Locale locale;");
         sink.ln(2);
 
@@ -421,6 +420,7 @@ public class StaticBundleProcessor {
         sink.end();
 
         sink.ln();
+        sink.append("@Override").ln();
         sink.append("public Locale locale()");
         sink.begin();
         sink.append("return locale;");
