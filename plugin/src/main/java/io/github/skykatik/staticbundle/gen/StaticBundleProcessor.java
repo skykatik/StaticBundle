@@ -811,7 +811,7 @@ public class StaticBundleProcessor {
 
                 String type = "String";
                 if (parts.length >= 3) {
-                    type = typeOf(parts[2]);
+                    type = parts[2];
                 }
 
                 return new ParameterArg(pos, type, name);
@@ -845,15 +845,6 @@ public class StaticBundleProcessor {
         }
 
         static final Arg[] EMPTY_ARG_ARRAY = new Arg[0];
-
-        static String typeOf(String group) {
-            return switch (group.toLowerCase(Locale.ROOT)) {
-                case "string" -> "String";
-                case "int" -> "int";
-                case "long" -> "long";
-                default -> throw new IllegalStateException(group);
-            };
-        }
 
         @Override
         public String toString() {
@@ -893,6 +884,15 @@ public class StaticBundleProcessor {
         public String methodName() {
             return methodName;
         }
+
+        @Override
+        public String toString() {
+            return "PluralPropertyArg{" +
+                    "baseKey='" + baseKey + '\'' +
+                    ", amountArg='" + amountArg + '\'' +
+                    ", methodName='" + methodName + '\'' +
+                    '}';
+        }
     }
 
     static final class OrdinalPropertyArg implements PropertyArg {
@@ -914,6 +914,15 @@ public class StaticBundleProcessor {
         @Override
         public String methodName() {
             return methodName;
+        }
+
+        @Override
+        public String toString() {
+            return "OrdinalPropertyArg{" +
+                    "baseKey='" + baseKey + '\'' +
+                    ", propertyArgs=" + Arrays.toString(propertyArgs) +
+                    ", methodName='" + methodName + '\'' +
+                    '}';
         }
     }
 
