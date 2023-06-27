@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
+import static io.github.skykatik.staticbundle.gen.ArgTable.EMPTY_STRING_ARRAY;
+
 public class StaticBundleProcessor {
 
     static final int REFERENCE_LOCALE_TAG = 0;
@@ -27,6 +29,7 @@ public class StaticBundleProcessor {
     final String resourceFilenameFormat;
     final FileCollection resources;
     final ProcessingResources procResources;
+    // TODO: configure property order
     final TreeMap<String, Property> properties = new TreeMap<>();
 
     public StaticBundleProcessor(Project project, Directory codegenDir,
@@ -66,7 +69,14 @@ public class StaticBundleProcessor {
             String key = e.getKey();
             String text = e.getValue();
 
-            parseProperty(referenceSettings, key, text);
+            var parts = procResources.naming.parse(key);
+            properties.compute(parts.baseKey(), (k, base) -> {
+                if (base == null) {
+                    return parseProperty(referenceSettings, parts, key, text);
+                }
+                base.merge(referenceSettings, parts, key, text);
+                return base;
+            });
         }
 
         checkForMissingPluralForms(referenceSettings);
@@ -92,76 +102,6 @@ public class StaticBundleProcessor {
 
             checkForMissingPluralForms(settings);
             checkForUnresolvedPropertyArgs(settings);
-        }
-    }
-
-    private void checkForUnresolvedPropertyArgs(LocaleSettings settings) {
-        for (Property value : properties.values()) {
-            if (value instanceof PluralProperty p) {
-                var pluralForms = p.messages[settings.localeTagValue];
-                for (int n = 0; n < pluralForms.length; n++) {
-                    var pluralForm = pluralForms[n];
-                    String key = procResources.naming.format(p.key, n);
-                    for (Arg arg : pluralForm.args) {
-                        if (arg instanceof PropertyArg pa) {
-                            checkForUnresolvedPropertyArg0(settings, p, key, pa);
-                        }
-                    }
-                }
-            } else if (value instanceof OrdinalProperty p) {
-                var message = p.messages[settings.localeTagValue];
-                for (Arg arg : message.args) {
-                    if (arg instanceof PropertyArg pa) {
-                        checkForUnresolvedPropertyArg0(settings, p, p.key, pa);
-                    }
-                }
-            } else {
-                throw new IllegalStateException();
-            }
-        }
-    }
-
-    private void checkForUnresolvedPropertyArg0(LocaleSettings settings, Property p, String key, PropertyArg pa) {
-        var property = properties.get(pa.baseKey());
-        if (property == null) {
-            throw settings.problem(key, "No property '" + pa.baseKey() + "' found");
-        }
-
-        if (property == p) {
-            throw settings.problem(key, "Recursive property argument");
-        }
-
-        if (property instanceof PluralProperty o) {
-            if (!(pa instanceof PluralPropertyArg pp)) {
-                throw settings.problem(key, "Property '" + o.key + "' is plural, but argument consider it as ordinal");
-            }
-
-            int i = p.argTable().index(pp.amountArg);
-            if (i == -1) {
-                throw settings.problem(key, "Unknown amount argument '" + pp.amountArg + "' for plural property '" + o.key + "'");
-            }
-
-            pp.methodName = o.methodName;
-        } else if (property instanceof OrdinalProperty o) {
-            if (!(pa instanceof OrdinalPropertyArg pp)) {
-                throw settings.problem(key, "Property '" + o.key + "' is ordinal, but argument consider it as plural");
-            }
-
-            if (o.argTable.size() != pp.propertyArgs.length) {
-                throw settings.problem(key, "Property '" + o.key + "' requires '" + o.argTable.size() + "'" +
-                        " arguments, but passed '" + pp.propertyArgs.length + "'");
-            }
-
-            for (String propertyArg : pp.propertyArgs) {
-                int i = p.argTable().index(propertyArg);
-                if (i == -1) {
-                    throw settings.problem(key, "Unknown argument '" + propertyArg + "' for property '" + o.key + "'");
-                }
-            }
-
-            pp.methodName = o.methodName;
-        } else {
-            throw new IllegalStateException();
         }
     }
 
@@ -226,6 +166,78 @@ public class StaticBundleProcessor {
             generateLocaleTagConstants(sink);
 
             sink.end();
+        }
+    }
+
+    // Internal methods
+
+    void checkForUnresolvedPropertyArgs(LocaleSettings settings) {
+        for (Property value : properties.values()) {
+            if (value instanceof PluralProperty p) {
+                var pluralForms = p.messages[settings.localeTagValue];
+                for (int n = 0; n < pluralForms.length; n++) {
+                    var pluralForm = pluralForms[n];
+                    String key = procResources.naming.format(p.key, n);
+                    for (Arg arg : pluralForm.args) {
+                        if (arg instanceof PropertyArg pa) {
+                            checkForUnresolvedPropertyArg0(settings, p, key, pa);
+                        }
+                    }
+                }
+            } else if (value instanceof OrdinalProperty p) {
+                var message = p.messages[settings.localeTagValue];
+                for (Arg arg : message.args) {
+                    if (arg instanceof PropertyArg pa) {
+                        checkForUnresolvedPropertyArg0(settings, p, p.key, pa);
+                    }
+                }
+            } else {
+                throw new IllegalStateException();
+            }
+        }
+    }
+
+    void checkForUnresolvedPropertyArg0(LocaleSettings settings, Property p, String key, PropertyArg pa) {
+        var property = properties.get(pa.baseKey());
+        if (property == null) {
+            throw settings.problem(key, "No property '" + pa.baseKey() + "' found");
+        }
+
+        if (property == p) {
+            throw settings.problem(key, "Recursive property argument");
+        }
+
+        if (property instanceof PluralProperty o) {
+            if (!(pa instanceof PluralPropertyArg pp)) {
+                throw settings.problem(key, "Property '" + o.key + "' is plural, but argument consider it as ordinal");
+            }
+
+            int i = p.argTable().index(pp.amountArg);
+            if (i == -1) {
+                throw settings.problem(key, "Unknown amount argument '" + pp.amountArg + "' for plural property '" + o.key + "'");
+            }
+
+            pp.methodName = o.methodName;
+        } else if (property instanceof OrdinalProperty o) {
+            if (!(pa instanceof OrdinalPropertyArg pp)) {
+                throw settings.problem(key, "Property '" + o.key + "' is ordinal, but argument consider it as plural");
+            }
+
+            if (o.argTable.size() != pp.propertyArgs.length) {
+                throw settings.problem(key, "Property '" + o.key + "' requires '" + o.argTable.size() + "'" +
+                        " arguments, but passed '" + pp.propertyArgs.length + "'");
+            }
+
+            for (String propertyArg : pp.propertyArgs) {
+                int i = p.argTable().index(propertyArg);
+                if (i == -1) {
+                    throw settings.problem(key, "Unknown argument '" + propertyArg + "' for property '" + o.key + "'");
+                }
+            }
+
+            pp.methodName = o.methodName;
+        } else {
+            throw new IllegalStateException();
         }
     }
 
@@ -502,6 +514,47 @@ public class StaticBundleProcessor {
     record Bundle(String resourcePath, Map<String, String> properties) {
     }
 
+    Property parseProperty(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
+
+        if (parts.pluralForm() != -1) {
+            if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
+                throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
+            }
+
+            var argNameTable = new ArgTable();
+            var msg = Message.parse(settings, argNameTable, key, text);
+            var messages = new Message[procResources.locales.size()][];
+
+            var locale = messages[settings.localeTagValue];
+            if (locale == null) {
+                messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
+            }
+            locale[parts.pluralForm()] = msg;
+
+            String methodName = translateKeyToMethodName(settings, parts.baseKey());
+            return new PluralProperty(parts.baseKey(), methodName, argNameTable, messages);
+        }
+
+        var argNameTable = new ArgTable();
+        var msg = Message.parse(settings, argNameTable, key, text);
+        var tokens = new Message[procResources.locales.size()];
+        tokens[settings.localeTagValue] = msg;
+
+        String methodName = translateKeyToMethodName(settings, key);
+        return new OrdinalProperty(parts.baseKey(), methodName, argNameTable, tokens);
+    }
+
+    String translateKeyToMethodName(LocaleSettings settings, String key) {
+        String methodName = procResources.naming.toMethodName(key);
+
+        if (!isValidJavaIdentifier(methodName)) {
+            throw settings.problem(key, "Naming '" + procResources.naming +
+                    "' generated illegal method name: '" + methodName + "'");
+        }
+
+        return methodName;
+    }
+
     static String constructLocale(Locale locale) {
         if (locale.equals(Locale.ROOT)) {
             return "Locale.ROOT";
@@ -543,20 +596,11 @@ public class StaticBundleProcessor {
             return "Locale.CANADA_FRENCH";
         }
 
-        String s = String.join(", ", makeLiteral(locale.getLanguage()),
-                makeLiteral(locale.getCountry()), makeLiteral(locale.getVariant()));
+        String s = String.join(", ",
+                makeLiteral(locale.getLanguage()),
+                makeLiteral(locale.getCountry()),
+                makeLiteral(locale.getVariant()));
         return "new Locale(" + s + ')';
-    }
-
-    String translateKeyToMethodName(LocaleSettings settings, String key) {
-        String methodName = procResources.naming.toMethodName(key);
-
-        if (!isValidJavaIdentifier(methodName)) {
-            throw settings.problem(key, "Naming '" + procResources.naming +
-                    "' generated illegal method name: '" + methodName + "'");
-        }
-
-        return methodName;
     }
 
     static boolean isValidJavaIdentifier(String name) {
@@ -590,57 +634,6 @@ public class StaticBundleProcessor {
         }
         out.append('"');
         return out.toString();
-    }
-
-    static String translateLocaleToTag(Locale locale) {
-        if (locale.equals(Locale.ROOT)) {
-            return "ROOT";
-        }
-        return locale.toString().toUpperCase(Locale.ROOT);
-    }
-
-    static final class LocaleSettings {
-        final Locale locale;
-        final String localeTag;
-        final int localeTagValue;
-        final int pluralFormsCount;
-        final String pluralFormFunction;
-
-        String relativeResourcePath;
-
-        LocaleSettings(Locale locale, String localeTag, int localeTagValue,
-                       int pluralFormsCount, String pluralFormFunction) {
-            this.locale = locale;
-            this.localeTag = localeTag;
-            this.localeTagValue = localeTagValue;
-            this.pluralFormsCount = pluralFormsCount;
-            this.pluralFormFunction = pluralFormFunction;
-        }
-
-        LocaleSettings(io.github.skykatik.staticbundle.plugin.LocaleSettings internal, int localeTagValue) {
-            this(internal.getLocale().get(), localeTagValue, internal.getPluralForms().get(),
-                    internal.getPluralFunction().get());
-        }
-
-        LocaleSettings(Locale locale, int localeTagValue, int pluralFormsCount, String pluralFormFunction) {
-            this(locale, translateLocaleToTag(locale), localeTagValue, pluralFormsCount, pluralFormFunction);
-        }
-
-        IllegalStateException problem(String key, String text) {
-            return new IllegalStateException("[Bundle: '" + relativeResourcePath + "', property: '" + key + "'] " + text);
-        }
-
-        @Override
-        public String toString() {
-            return "LocaleSettings{" +
-                    "locale=" + locale +
-                    ", localeTag='" + localeTag + '\'' +
-                    ", localeTagValue=" + localeTagValue +
-                    ", pluralFormsCount=" + pluralFormsCount +
-                    ", pluralFormFunction='" + pluralFormFunction + '\'' +
-                    ", relativeResourcePath='" + relativeResourcePath + '\'' +
-                    '}';
-        }
     }
 
     record ProcessingResources(List<LocaleSettings> locales, PropertyNaming naming) {
@@ -883,6 +876,8 @@ public class StaticBundleProcessor {
         }
     }
 
+    // region Args model
+
     record CodeArg(String code) implements Arg {
     }
 
@@ -967,6 +962,10 @@ public class StaticBundleProcessor {
     sealed interface Arg {
     }
 
+    // endregion
+
+    // region Property model
+
     record OrdinalProperty(String key, String methodName,
                            ArgTable argTable,
                            Message[/*localeTag*/] messages) implements Property {
@@ -1008,48 +1007,6 @@ public class StaticBundleProcessor {
         }
     }
 
-    Property parseProperty(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
-
-        if (parts.pluralForm() != -1) {
-            if (parts.pluralForm() < 0 || parts.pluralForm() >= settings.pluralFormsCount) {
-                throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
-            }
-
-            var argNameTable = new ArgTable();
-            var msg = Message.parse(settings, argNameTable, key, text);
-            var messages = new Message[procResources.locales.size()][];
-
-            var locale = messages[settings.localeTagValue];
-            if (locale == null) {
-                messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
-            }
-            locale[parts.pluralForm()] = msg;
-
-            String methodName = translateKeyToMethodName(settings, parts.baseKey());
-            return new PluralProperty(parts.baseKey(), methodName, argNameTable, messages);
-        }
-
-        var argNameTable = new ArgTable();
-        var msg = Message.parse(settings, argNameTable, key, text);
-        var tokens = new Message[procResources.locales.size()];
-        tokens[settings.localeTagValue] = msg;
-
-        String methodName = translateKeyToMethodName(settings, key);
-        return new OrdinalProperty(parts.baseKey(), methodName, argNameTable, tokens);
-    }
-
-    void parseProperty(LocaleSettings settings, String key, String text) {
-        var parts = procResources.naming.parse(key);
-        properties.compute(parts.baseKey(), (k, v) -> {
-            if (v == null) {
-                return parseProperty(settings, parts, key, text);
-            }
-
-            v.merge(settings, parts, key, text);
-            return v;
-        });
-    }
-
     sealed interface Property {
 
         String key();
@@ -1061,52 +1018,5 @@ public class StaticBundleProcessor {
         void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text);
     }
 
-    static class ArgTable {
-        int count;
-        String[] names = EMPTY_STRING_ARRAY;
-
-        String add(int index, String name) {
-            if (index >= names.length) {
-                names = Arrays.copyOf(names, names.length + 4);
-            }
-            String currentName = names[index];
-            if (currentName == null) {
-                names[index] = name;
-                count++;
-                return null;
-            }
-            return currentName;
-        }
-
-        String name(int index) {
-            return names[index];
-        }
-
-        int index(String name) {
-            for (int i = 0; i < count; i++) {
-                if (name.equals(names[i])) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-
-        int maxIndex() {
-            return names.length;
-        }
-
-        boolean isEmpty() {
-            return names == EMPTY_STRING_ARRAY;
-        }
-
-        int size() {
-            return count;
-        }
-
-        public void trim() {
-            names = Arrays.copyOf(names, count);
-        }
-    }
-
-    static final String[] EMPTY_STRING_ARRAY = new String[0];
+    // endregion
 }
