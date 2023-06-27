@@ -361,46 +361,6 @@ public class StaticBundleProcessor {
         sink.end();
     }
 
-    void printMessage(CharSink sink, Message message) throws IOException {
-        for (int i = 0, k = 0; i < message.tokens.length; i++) {
-            sink.append(message.tokens[i]);
-
-            if (k < message.args.length) {
-                Arg arg = message.args[k++];
-
-                sink.append(" + ");
-                if (arg instanceof CodeArg c) {
-                    sink.append(c.code);
-                } else if (arg instanceof OrdinalPropertyArg p) {
-                    sink.append(p.methodName);
-                    sink.append('(');
-                    for (int v = 0; v < p.propertyArgs.length; v++) {
-                        sink.append(p.propertyArgs[v]);
-                        if (v != p.propertyArgs.length - 1) {
-                            sink.append(", ");
-                        }
-                    }
-                    sink.append(')');
-                } else if (arg instanceof PluralPropertyArg p) {
-                    sink.append(p.methodName);
-                    sink.append('(');
-                    sink.append(p.amountArg);
-                    sink.append(')');
-                } else if (arg instanceof DefaultArg p) {
-                    sink.append(p.name);
-                } else if (arg instanceof ParameterArg p) {
-                    sink.append(p.name);
-                } else {
-                    throw new IllegalStateException();
-                }
-            }
-
-            if (i != message.tokens.length - 1) {
-                sink.append(" + ");
-            }
-        }
-    }
-
     void generateLocaleTagConstants(CharSink sink) throws IOException {
         sink.ln();
         sink.append("public enum LocaleTag implements io.github.skykatik.staticbundle.LocaleTag");
@@ -488,6 +448,46 @@ public class StaticBundleProcessor {
         sink.end();
     }
 
+    void printMessage(CharSink sink, Message message) throws IOException {
+        for (int i = 0, k = 0; i < message.tokens.length; i++) {
+            sink.append(message.tokens[i]);
+
+            if (k < message.args.length) {
+                Arg arg = message.args[k++];
+
+                sink.append(" + ");
+                if (arg instanceof CodeArg c) {
+                    sink.append(c.code);
+                } else if (arg instanceof OrdinalPropertyArg p) {
+                    sink.append(p.methodName);
+                    sink.append('(');
+                    for (int v = 0; v < p.propertyArgs.length; v++) {
+                        sink.append(p.propertyArgs[v]);
+                        if (v != p.propertyArgs.length - 1) {
+                            sink.append(", ");
+                        }
+                    }
+                    sink.append(')');
+                } else if (arg instanceof PluralPropertyArg p) {
+                    sink.append(p.methodName);
+                    sink.append('(');
+                    sink.append(p.amountArg);
+                    sink.append(')');
+                } else if (arg instanceof DefaultArg p) {
+                    sink.append(p.name);
+                } else if (arg instanceof ParameterArg p) {
+                    sink.append(p.name);
+                } else {
+                    throw new IllegalStateException();
+                }
+            }
+
+            if (i != message.tokens.length - 1) {
+                sink.append(" + ");
+            }
+        }
+    }
+
     Bundle loadBundle(Locale locale) throws IOException {
         String localeTag = locale.equals(Locale.ROOT) ? "" : "_" + locale;
 
@@ -554,6 +554,8 @@ public class StaticBundleProcessor {
 
         return methodName;
     }
+
+    // region utilities
 
     static String constructLocale(Locale locale) {
         if (locale.equals(Locale.ROOT)) {
@@ -636,6 +638,8 @@ public class StaticBundleProcessor {
         return out.toString();
     }
 
+    // endregion
+
     record ProcessingResources(List<LocaleSettings> locales, PropertyNaming naming) {
 
         boolean isSingle() {
@@ -703,7 +707,7 @@ public class StaticBundleProcessor {
 
                 for (int i = 0; i < args.size(); i++) {
                     var arg = args.get(i);
-                    if (arg instanceof DeferedArg d) {
+                    if (arg instanceof DeferredArg d) {
                         var resolvedName = d.name != null
                                 ? resolveArg(settings, key, argTable, d.name)
                                 : resolveArg(settings, key, argTable, d.pos);
@@ -800,6 +804,10 @@ public class StaticBundleProcessor {
                                      String key, String argText) {
             String[] parts;
             if (settings.localeTagValue == REFERENCE_LOCALE_TAG && (parts = argText.split(":")).length >= 2) {
+                if (parts.length > 3) {
+                    throw settings.problem(key, "Malformed argument with 3 and more parts.");
+                }
+
                 String posStr = parts[0];
                 String name = parts[1];
                 int pos;
@@ -829,12 +837,7 @@ public class StaticBundleProcessor {
                             name + "' reuses index of '" + occupiedName + "'");
                 }
 
-                String type = "String";
-                if (parts.length >= 3) {
-                    type = parts[2];
-                }
-                // TODO check end
-
+                String type = parts.length == 3 ? parts[2] : "String";
                 return new ParameterArg(pos, type, name);
             }
 
@@ -847,13 +850,13 @@ public class StaticBundleProcessor {
                 }
 
                 if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
-                    return new DeferedArg(pos, null);
+                    return new DeferredArg(pos, null);
                 }
 
                 name = resolveArg(settings, key, argTable, pos);
             } catch (IllegalArgumentException e) {
                 if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
-                    return new DeferedArg(-1, argText);
+                    return new DeferredArg(-1, argText);
                 }
 
                 name = resolveArg(settings, key, argTable, argText);
@@ -952,7 +955,7 @@ public class StaticBundleProcessor {
     record ParameterArg(int pos, String type, String name) implements Arg {
     }
 
-    record DeferedArg(int pos, String name) implements Arg {
+    record DeferredArg(int pos, String name) implements Arg {
 
     }
 
