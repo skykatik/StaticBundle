@@ -1,7 +1,9 @@
 import java.util.*
 
 plugins {
-    id("io.github.skykatik.staticbundle")
+    val isJitpack = System.getenv("JITPACK") == "true"
+
+    id("${if (isJitpack) "com" else "io"}.github.skykatik.staticbundle")
 }
 
 sourceSets {
