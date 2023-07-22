@@ -7,6 +7,37 @@ The resulting classes contain accessor methods which return bundle string depend
 
 TBD...
 
+_Currently only from maven local or jitpack_
+
+### Gradle
+
+In `build.gradle.kts`:
+```kotlin
+plugins {
+    // other plugins
+    id("com.github.skykatik.staticbundle") version "VERSION"
+}
+
+repositories {
+    // other repositories
+    maven("https://www.jitpack.io")
+}
+
+dependencies {
+    implementation("com.github.skykatik.StaticBundle:core:VERSION")
+}
+```
+
+And in `settings.gradle.kts`:
+```kotlin
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven("https://jitpack.io")
+    }
+}
+```
+
 ```kotlin
 import java.util.Locale
 
