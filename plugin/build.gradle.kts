@@ -14,7 +14,7 @@ gradlePlugin {
 
     plugins {
         register("codegen") {
-            id = if (isJitpack)
+            id = if (!isJitpack)
                 "io.github.skykatik.staticbundle"
             else
                 "com.github.skykatik.staticbundle"
