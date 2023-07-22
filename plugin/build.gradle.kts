@@ -14,10 +14,10 @@ gradlePlugin {
 
     plugins {
         register("codegen") {
-            if (isJitpack)
-                id = "io.github.skykatik.staticbundle"
+            id = if (isJitpack)
+                "io.github.skykatik.staticbundle"
             else
-                id = "com.github.skykatik.staticbundle"
+                "com.github.skykatik.staticbundle"
             displayName = "Static Bundle Generator"
             description = "A gradle plugin for generating java classes from .proprerties files."
             implementationClass = "io.github.skykatik.staticbundle.plugin.StaticBundlePlugin"
