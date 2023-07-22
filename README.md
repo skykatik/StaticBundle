@@ -11,8 +11,12 @@ _Currently only from maven local or jitpack_
 
 ### Gradle
 
+Here `VERSION` it's short hash of commit, like a `9cbb53c65b5889f51b4a7c4e81d72907a6659d23`
+
 In `build.gradle.kts`:
 ```kotlin
+import java.util.Locale
+
 plugins {
     // other plugins
     id("com.github.skykatik.staticbundle") version "VERSION"
@@ -25,24 +29,6 @@ repositories {
 
 dependencies {
     implementation("com.github.skykatik.StaticBundle:core:VERSION")
-}
-```
-
-And in `settings.gradle.kts`:
-```kotlin
-pluginManagement {
-    repositories {
-        gradlePluginPortal()
-        maven("https://jitpack.io")
-    }
-}
-```
-
-```kotlin
-import java.util.Locale
-
-plugins {
-    id("io.github.skykatik.staticbundle")
 }
 
 staticBundle {
@@ -71,7 +57,16 @@ staticBundle {
     }
   }
 }
+```
 
+And in `settings.gradle.kts`:
+```kotlin
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven("https://jitpack.io")
+    }
+}
 ```
 
 ### Format details
