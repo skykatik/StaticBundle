@@ -398,6 +398,22 @@ public class StaticBundleProcessor {
         sink.append("return locale;");
         sink.end();
 
+        sink.ln();
+        sink.append("public static LocaleTag of(String localeString)");
+        sink.begin();
+        sink.append("return switch (localeString)");
+        sink.begin();
+
+        for (int i = 0; i < procResources.locales.size(); i++) {
+            var settings = procResources.locales.get(i);
+            sink.append("case ").append(makeLiteral(settings.locale.toString())).append(" -> ");
+            sink.append(settings.localeTag);
+            sink.append(";\n");
+        }
+        sink.append("default -> null;");
+        sink.endsc();
+        sink.end();
+
         sink.end();
     }
 
