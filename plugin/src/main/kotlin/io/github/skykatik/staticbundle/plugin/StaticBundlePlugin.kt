@@ -7,6 +7,7 @@ import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.kotlin.dsl.apply
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
+import java.util.function.Function
 
 class StaticBundlePlugin : Plugin<Project> {
 
@@ -23,6 +24,7 @@ class StaticBundlePlugin : Plugin<Project> {
         ext.sourceSetSettings.all {
             javaExt.sourceSets.named(name) {
                 naming.convention(project.provider { PropertyNaming.instance() })
+                contentTransformer.convention(project.provider { Function.identity() })
 
                 val sourceSetName = getTaskName("staticBundle", "Processor")
                 val task = project.tasks.register<StaticBundleProcessor>(sourceSetName, this, this@all)

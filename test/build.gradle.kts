@@ -21,6 +21,7 @@ staticBundle {
     sourceSetSettings.create("main") {
         resourceFilenameFormat.set("messages{locale}.properties")
         messageSourceClassName.set("io.github.skykatik.staticbundle.test.CustomMessageSource")
+        contentTransformer.set { "*".repeat(it.length) }
 
         settings {
             setting {
@@ -40,6 +41,7 @@ staticBundle {
     sourceSetSettings.create("another") {
         resourceFilenameFormat.set("messages{locale}.properties")
         messageSourceClassName.set("test.SuperMsgSource")
+//        contentTransformer.set(ContentTransformer { it.replace('a', '1') })
 
         settings {
             setting {

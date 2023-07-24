@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Function;
 
 import static io.github.skykatik.staticbundle.gen.ArgTable.EMPTY_STRING_ARRAY;
 
@@ -57,7 +58,8 @@ public class StaticBundleProcessor {
         }
 
         var naming = sett.getNaming().get();
-        procResources = new ProcessingResources(locales, naming);
+        var contentTransformer = sett.getContentTransformer().get();
+        procResources = new ProcessingResources(locales, naming, contentTransformer);
     }
 
     public void validate() throws IOException {
@@ -74,7 +76,7 @@ public class StaticBundleProcessor {
                 if (base == null) {
                     return parseProperty(referenceSettings, parts, key, text);
                 }
-                base.merge(referenceSettings, parts, key, text);
+                base.merge(procResources, referenceSettings, parts, key, text);
                 return base;
             });
         }
@@ -97,7 +99,7 @@ public class StaticBundleProcessor {
                     throw settings.problem(k, "Extraneous property");
                 }
 
-                referenceProperty.merge(settings, parts, k, v);
+                referenceProperty.merge(procResources, settings, parts, k, v);
             }
 
             checkForMissingPluralForms(settings);
@@ -538,7 +540,7 @@ public class StaticBundleProcessor {
             }
 
             var argNameTable = new ArgTable();
-            var msg = Message.parse(settings, argNameTable, key, text);
+            var msg = Message.parse(procResources, settings, argNameTable, key, text);
             var messages = new Message[procResources.locales.size()][];
 
             var locale = messages[settings.localeTagValue];
@@ -552,7 +554,7 @@ public class StaticBundleProcessor {
         }
 
         var argNameTable = new ArgTable();
-        var msg = Message.parse(settings, argNameTable, key, text);
+        var msg = Message.parse(procResources, settings, argNameTable, key, text);
         var tokens = new Message[procResources.locales.size()];
         tokens[settings.localeTagValue] = msg;
 
@@ -656,7 +658,8 @@ public class StaticBundleProcessor {
 
     // endregion
 
-    record ProcessingResources(List<LocaleSettings> locales, PropertyNaming naming) {
+    record ProcessingResources(List<LocaleSettings> locales, PropertyNaming naming,
+                               Function<String, String> contentTransformer) {
 
         boolean isSingle() {
             return locales.size() == 1;
@@ -665,7 +668,8 @@ public class StaticBundleProcessor {
 
     record Message(Arg[] args, String[] tokens) {
 
-        static Message parse(LocaleSettings settings, ArgTable argTable, String key, String text) {
+        static Message parse(ProcessingResources procResources,
+                             LocaleSettings settings, ArgTable argTable, String key, String text) {
             var tokens = new ArrayList<String>();
             var args = new ArrayList<Arg>();
             int prev = 0;
@@ -703,14 +707,16 @@ public class StaticBundleProcessor {
                     }
 
                     int begin = call || propertyCall ? i - 1 : i;
-                    tokens.add(makeLiteral(text.substring(prev, begin)));
+                    String part = procResources.contentTransformer.apply(text.substring(prev, begin));
+                    tokens.add(makeLiteral(part));
 
                     args.add(arg);
                     prev = end + 1;
                 }
             }
             if (prev != text.length()) {
-                tokens.add(makeLiteral(text.substring(prev)));
+                String remains = procResources.contentTransformer.apply(text.substring(prev));
+                tokens.add((makeLiteral(remains)));
             }
 
             if (settings.localeTagValue == REFERENCE_LOCALE_TAG) {
@@ -989,8 +995,9 @@ public class StaticBundleProcessor {
                            ArgTable argTable,
                            Message[/*localeTag*/] messages) implements Property {
         @Override
-        public void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
-            messages[settings.localeTagValue] = Message.parse(settings, argTable, key, text);
+        public void merge(ProcessingResources procResources, LocaleSettings settings,
+                          PropertyNaming.Parts parts, String key, String text) {
+            messages[settings.localeTagValue] = Message.parse(procResources, settings, argTable, key, text);
         }
 
         @Override
@@ -1007,7 +1014,8 @@ public class StaticBundleProcessor {
                           ArgTable argTable,
                           Message[/*localeTag*/][/*pluralForm*/] messages) implements Property {
         @Override
-        public void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text) {
+        public void merge(ProcessingResources procResources, LocaleSettings settings,
+                          PropertyNaming.Parts parts, String key, String text) {
             if (parts.pluralForm() == -1) {
                 throw settings.problem(key, "Aliases with plural property");
             }
@@ -1016,7 +1024,7 @@ public class StaticBundleProcessor {
                 throw settings.problem(key, "Plural form is out of range [0, " + settings.pluralFormsCount + ")");
             }
 
-            var msg = Message.parse(settings, argTable, key, text);
+            var msg = Message.parse(procResources, settings, argTable, key, text);
             var locale = messages[settings.localeTagValue];
             if (locale == null) {
                 messages[settings.localeTagValue] = locale = new Message[settings.pluralFormsCount];
@@ -1034,7 +1042,8 @@ public class StaticBundleProcessor {
 
         ArgTable argTable();
 
-        void merge(LocaleSettings settings, PropertyNaming.Parts parts, String key, String text);
+        void merge(ProcessingResources procResources, LocaleSettings settings,
+                   PropertyNaming.Parts parts, String key, String text);
     }
 
     // endregion
